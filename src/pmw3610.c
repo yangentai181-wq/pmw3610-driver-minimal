@@ -616,18 +616,14 @@ static int pmw3610_report_data(const struct device *dev) {
     int16_t x;
     int16_t y;
 
-#if AUTOMOUSE_LAYER > 0
-    if (input_mode == MOVE &&
-         (automouse_triggered || zmk_keymap_highest_layer_active() != AUTOMOUSE_LAYER) &&
-            (abs(x) + abs(y) > CONFIG_PMW3610_MOVEMENT_THRESHOLD)
-) {
-    activate_automouse_layer();
-}
-#endif
-
     int err = motion_burst_read(dev, buf, sizeof(buf));
     if (err) {
         return err;
+    }
+
+    // Validate motion bit (bit 7 of MOTION register) - skip if no real motion detected
+    if (!(buf[0] & 0x80)) {
+        return 0;
     }
 
     int16_t raw_x =
@@ -722,39 +718,69 @@ static int pmw3610_report_data(const struct device *dev) {
     }
 #endif
 
-    if (x != 0 || y != 0) {
-        if (input_mode != SCROLL) {
-#if AUTOMOUSE_LAYER > 0
-            // トラックボールの動きの大きさを計算
-            int16_t movement_size = abs(x) + abs(y);
-            if (input_mode == MOVE &&
-                (automouse_triggered || zmk_keymap_highest_layer_active() != AUTOMOUSE_LAYER) &&
-                movement_size > CONFIG_PMW3610_MOVEMENT_THRESHOLD) {
-                activate_automouse_layer();
-            }
-#endif
-            input_report_rel(dev, INPUT_REL_X, x, false, K_FOREVER);
-            input_report_rel(dev, INPUT_REL_Y, y, true, K_FOREVER);
+    if (x == 0 && y == 0) {
+        return 0;
+    }
+
+#if CONFIG_PMW3610_DEADZONE > 0
+    // Accumulated dead zone filter:
+    // Buffer small movements and report only when accumulated total exceeds threshold.
+    // Timeout resets the accumulator to prevent biased noise from causing slow drift.
+    if (input_mode != SCROLL) {
+        data->accum_x += x;
+        data->accum_y += y;
+
+        int64_t now = k_uptime_get();
+        if (abs(data->accum_x) >= CONFIG_PMW3610_DEADZONE ||
+            abs(data->accum_y) >= CONFIG_PMW3610_DEADZONE) {
+            // Accumulated movement exceeds threshold - report it
+            x = data->accum_x;
+            y = data->accum_y;
+            data->accum_x = 0;
+            data->accum_y = 0;
+            data->last_motion_time = now;
+        } else if (now - data->last_motion_time > CONFIG_PMW3610_DEADZONE_TIMEOUT_MS) {
+            // Timeout - discard accumulated noise
+            data->accum_x = 0;
+            data->accum_y = 0;
+            return 0;
         } else {
-            data->scroll_delta_x += x;
-            data->scroll_delta_y += y;
-            if (abs(data->scroll_delta_y) > CONFIG_PMW3610_SCROLL_TICK) {
-                input_report_rel(dev, INPUT_REL_WHEEL,
-                                 data->scroll_delta_y > 0 ? PMW3610_SCROLL_Y_NEGATIVE : PMW3610_SCROLL_Y_POSITIVE,
-                                 true, K_FOREVER);
-                data->scroll_delta_x = 0;
-                data->scroll_delta_y = 0;
-            } else if (abs(data->scroll_delta_x) > CONFIG_PMW3610_SCROLL_TICK) {
-                input_report_rel(dev, INPUT_REL_HWHEEL,
-                                 data->scroll_delta_x > 0 ? PMW3610_SCROLL_X_NEGATIVE : PMW3610_SCROLL_X_POSITIVE,
-                                 true, K_FOREVER);
-                data->scroll_delta_x = 0;
-                data->scroll_delta_y = 0;
-            }
+            // Still accumulating - wait for more data
+            return 0;
+        }
+    }
+#endif
+
+    if (input_mode != SCROLL) {
+#if AUTOMOUSE_LAYER > 0
+        int16_t movement_size = abs(x) + abs(y);
+        if (input_mode == MOVE &&
+            (automouse_triggered || zmk_keymap_highest_layer_active() != AUTOMOUSE_LAYER) &&
+            movement_size > CONFIG_PMW3610_MOVEMENT_THRESHOLD) {
+            activate_automouse_layer();
+        }
+#endif
+        input_report_rel(dev, INPUT_REL_X, x, false, K_FOREVER);
+        input_report_rel(dev, INPUT_REL_Y, y, true, K_FOREVER);
+    } else {
+        data->scroll_delta_x += x;
+        data->scroll_delta_y += y;
+        if (abs(data->scroll_delta_y) > CONFIG_PMW3610_SCROLL_TICK) {
+            input_report_rel(dev, INPUT_REL_WHEEL,
+                             data->scroll_delta_y > 0 ? PMW3610_SCROLL_Y_NEGATIVE : PMW3610_SCROLL_Y_POSITIVE,
+                             true, K_FOREVER);
+            data->scroll_delta_x = 0;
+            data->scroll_delta_y = 0;
+        } else if (abs(data->scroll_delta_x) > CONFIG_PMW3610_SCROLL_TICK) {
+            input_report_rel(dev, INPUT_REL_HWHEEL,
+                             data->scroll_delta_x > 0 ? PMW3610_SCROLL_X_NEGATIVE : PMW3610_SCROLL_X_POSITIVE,
+                             true, K_FOREVER);
+            data->scroll_delta_x = 0;
+            data->scroll_delta_y = 0;
         }
     }
 
-    return err;
+    return 0;
 }
 
 static void pmw3610_gpio_callback(const struct device *gpiob, struct gpio_callback *cb,

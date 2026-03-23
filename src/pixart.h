@@ -48,6 +48,13 @@ struct pixart_data {
 
     // for pmw3610 smart algorithm
     bool sw_smart_flag;
+
+#if CONFIG_PMW3610_DEADZONE > 0
+    // accumulated dead zone filter
+    int16_t accum_x;
+    int16_t accum_y;
+    int64_t last_motion_time;
+#endif
 };
 
 // device config data structure

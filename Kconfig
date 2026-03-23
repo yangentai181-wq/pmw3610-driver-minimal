@@ -188,6 +188,27 @@ config PMW3610_MOVEMENT_THRESHOLD
         A higher value means more movement is required to activate the mouse layer.
         This helps prevent accidental activation during typing.
 
+config PMW3610_DEADZONE
+    int "Dead zone threshold for noise filtering (0=disabled)"
+    default 2
+    range 0 10
+    help
+      Movement threshold (in sensor counts) to filter noise.
+      Movements below this value are accumulated internally and only
+      reported when the total exceeds it. A timeout resets the accumulator
+      to prevent biased noise from causing slow drift.
+      Set to 0 to disable. Recommended: 2 for typical use.
+
+config PMW3610_DEADZONE_TIMEOUT_MS
+    int "Dead zone accumulator timeout in milliseconds"
+    default 80
+    range 20 500
+    depends on PMW3610_DEADZONE > 0
+    help
+      Time after which accumulated sub-threshold movements are discarded.
+      Shorter values reject noise faster but may clip very slow movements.
+      Longer values preserve slow movements but may allow brief noise drift.
+
 module = PMW3610
 module-str = PMW3610
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
