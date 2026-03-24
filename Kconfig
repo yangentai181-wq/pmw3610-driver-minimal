@@ -209,6 +209,16 @@ config PMW3610_DEADZONE_TIMEOUT_MS
       Shorter values reject noise faster but may clip very slow movements.
       Longer values preserve slow movements but may allow brief noise drift.
 
+config PMW3610_AXIS_LOCK_RATIO
+    int "Dominant axis lock ratio (0=disabled)"
+    default 3
+    range 0 10
+    help
+      When the dominant axis movement is this many times larger than
+      the minor axis, suppress the minor axis to eliminate wavy trajectories.
+      For example, ratio=3 means if X is 3x larger than Y, Y is zeroed.
+      Set to 0 to disable. Recommended: 3 for typical use.
+
 module = PMW3610
 module-str = PMW3610
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"

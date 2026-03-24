@@ -752,6 +752,18 @@ static int pmw3610_report_data(const struct device *dev) {
 #endif
 
     if (input_mode != SCROLL) {
+#if CONFIG_PMW3610_AXIS_LOCK_RATIO > 0
+        // Dominant axis lock: suppress the minor axis when movement
+        // is clearly in one direction, eliminating wavy trajectories.
+        int16_t abs_x = abs(x);
+        int16_t abs_y = abs(y);
+        if (abs_x > abs_y * CONFIG_PMW3610_AXIS_LOCK_RATIO) {
+            y = 0;
+        } else if (abs_y > abs_x * CONFIG_PMW3610_AXIS_LOCK_RATIO) {
+            x = 0;
+        }
+#endif
+
 #if AUTOMOUSE_LAYER > 0
         int16_t movement_size = abs(x) + abs(y);
         if (input_mode == MOVE &&
