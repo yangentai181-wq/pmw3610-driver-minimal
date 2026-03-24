@@ -50,10 +50,10 @@ struct pixart_data {
     bool sw_smart_flag;
 
 #if CONFIG_PMW3610_DEADZONE > 0
-    // accumulated dead zone filter
-    int16_t accum_x;
-    int16_t accum_y;
-    int64_t last_motion_time;
+    // velocity gate + direction consistency filter
+    int64_t last_significant_time;
+    int8_t prev_sign_x;
+    int8_t prev_sign_y;
 #endif
 };
 

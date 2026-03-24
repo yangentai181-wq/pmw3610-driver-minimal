@@ -723,30 +723,38 @@ static int pmw3610_report_data(const struct device *dev) {
     }
 
 #if CONFIG_PMW3610_DEADZONE > 0
-    // Accumulated dead zone filter:
-    // Buffer small movements and report only when accumulated total exceeds threshold.
-    // Timeout resets the accumulator to prevent biased noise from causing slow drift.
+    // Velocity gate + direction consistency filter (MOVE mode only):
+    // - Large movement (>= threshold): always pass through at full 250Hz
+    // - Small movement after recent large: pass through (smooth deceleration)
+    // - Small movement from stationary: pass only if direction is consistent
+    //   with previous frame (real slow movement), suppress if direction
+    //   flips (random noise)
     if (input_mode != SCROLL) {
-        data->accum_x += x;
-        data->accum_y += y;
-
         int64_t now = k_uptime_get();
-        if (abs(data->accum_x) >= CONFIG_PMW3610_DEADZONE ||
-            abs(data->accum_y) >= CONFIG_PMW3610_DEADZONE) {
-            // Accumulated movement exceeds threshold - report it
-            x = data->accum_x;
-            y = data->accum_y;
-            data->accum_x = 0;
-            data->accum_y = 0;
-            data->last_motion_time = now;
-        } else if (now - data->last_motion_time > CONFIG_PMW3610_DEADZONE_TIMEOUT_MS) {
-            // Timeout - discard accumulated noise
-            data->accum_x = 0;
-            data->accum_y = 0;
-            return 0;
+        bool significant = (abs(x) >= CONFIG_PMW3610_DEADZONE ||
+                            abs(y) >= CONFIG_PMW3610_DEADZONE);
+
+        if (significant) {
+            // Large movement - always report
+            data->last_significant_time = now;
+        } else if (now - data->last_significant_time < CONFIG_PMW3610_DEADZONE_TIMEOUT_MS) {
+            // Recently had significant movement - pass through for smooth deceleration
         } else {
-            // Still accumulating - wait for more data
-            return 0;
+            // Small movement, not recently active - check direction consistency
+            int8_t sx = (x > 0) - (x < 0);
+            int8_t sy = (y > 0) - (y < 0);
+            bool consistent = (sx != 0 && sx == data->prev_sign_x) ||
+                              (sy != 0 && sy == data->prev_sign_y);
+            data->prev_sign_x = sx;
+            data->prev_sign_y = sy;
+
+            if (consistent) {
+                // Same direction as previous frame - real slow movement
+                data->last_significant_time = now;
+            } else {
+                // Direction flipped - noise, suppress
+                return 0;
+            }
         }
     }
 #endif
