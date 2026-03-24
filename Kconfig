@@ -190,14 +190,14 @@ config PMW3610_MOVEMENT_THRESHOLD
 
 config PMW3610_DEADZONE
     int "Dead zone threshold for noise filtering (0=disabled)"
-    default 2
+    default 1
     range 0 10
     help
       Movement threshold (in sensor counts) to filter noise.
       Movements below this value are accumulated internally and only
-      reported when the total exceeds it. A timeout resets the accumulator
-      to prevent biased noise from causing slow drift.
-      Set to 0 to disable. Recommended: 2 for typical use.
+      reported when the total exceeds it. With motion bit validation
+      and axis lock active, 1 is sufficient.
+      Set to 0 to disable.
 
 config PMW3610_DEADZONE_TIMEOUT_MS
     int "Dead zone accumulator timeout in milliseconds"
