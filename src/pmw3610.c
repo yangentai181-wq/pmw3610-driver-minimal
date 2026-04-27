@@ -772,6 +772,19 @@ static int pmw3610_report_data(const struct device *dev) {
         }
 #endif
 
+#ifdef CONFIG_PMW3610_EMA_FILTER
+        if (!data->ema_initialized) {
+            data->ema_x = x;
+            data->ema_y = y;
+            data->ema_initialized = true;
+        } else {
+            x = (CONFIG_PMW3610_EMA_ALPHA * x + (100 - CONFIG_PMW3610_EMA_ALPHA) * data->ema_x) / 100;
+            y = (CONFIG_PMW3610_EMA_ALPHA * y + (100 - CONFIG_PMW3610_EMA_ALPHA) * data->ema_y) / 100;
+            data->ema_x = x;
+            data->ema_y = y;
+        }
+#endif
+
 #if AUTOMOUSE_LAYER > 0
         int16_t movement_size = abs(x) + abs(y);
         if (input_mode == MOVE &&

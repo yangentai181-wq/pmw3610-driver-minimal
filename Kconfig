@@ -219,6 +219,24 @@ config PMW3610_AXIS_LOCK_RATIO
       For example, ratio=3 means if X is 3x larger than Y, Y is zeroed.
       Set to 0 to disable. Recommended: 3 for typical use.
 
+config PMW3610_EMA_FILTER
+    bool "Enable EMA smoothing filter"
+    default n
+    help
+      Enable exponential moving average filter on X/Y movement
+      to reduce cursor jitter at low speed without dropping frames.
+
+config PMW3610_EMA_ALPHA
+    int "EMA alpha (current value weight, 1-99)"
+    default 70
+    range 1 99
+    depends on PMW3610_EMA_FILTER
+    help
+      Weight of the current reading as percentage.
+      Higher = less smoothing, lower latency. Lower = more smoothing, more latency.
+      70 = light smoothing (recommended starting point).
+      Formula: output = (alpha * current + (100 - alpha) * previous) / 100
+
 module = PMW3610
 module-str = PMW3610
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
