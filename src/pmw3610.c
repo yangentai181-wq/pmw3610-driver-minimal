@@ -778,10 +778,20 @@ static int pmw3610_report_data(const struct device *dev) {
             data->ema_y = y;
             data->ema_initialized = true;
         } else {
-            x = (CONFIG_PMW3610_EMA_ALPHA * x + (100 - CONFIG_PMW3610_EMA_ALPHA) * data->ema_x) / 100;
-            y = (CONFIG_PMW3610_EMA_ALPHA * y + (100 - CONFIG_PMW3610_EMA_ALPHA) * data->ema_y) / 100;
-            data->ema_x = x;
-            data->ema_y = y;
+            // Direction reversal reset: when direction flips with significant
+            // magnitude, reset EMA to current value to avoid lag at reversals.
+            if (abs(x) >= 2 && ((x > 0 && data->ema_x < 0) || (x < 0 && data->ema_x > 0))) {
+                data->ema_x = x;
+            } else {
+                x = (CONFIG_PMW3610_EMA_ALPHA * x + (100 - CONFIG_PMW3610_EMA_ALPHA) * data->ema_x) / 100;
+                data->ema_x = x;
+            }
+            if (abs(y) >= 2 && ((y > 0 && data->ema_y < 0) || (y < 0 && data->ema_y > 0))) {
+                data->ema_y = y;
+            } else {
+                y = (CONFIG_PMW3610_EMA_ALPHA * y + (100 - CONFIG_PMW3610_EMA_ALPHA) * data->ema_y) / 100;
+                data->ema_y = y;
+            }
         }
 #endif
 
