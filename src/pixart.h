@@ -56,10 +56,19 @@ struct pixart_data {
     int8_t prev_sign_y;
 #endif
 
-#ifdef CONFIG_PMW3610_EMA_FILTER
+#ifdef CONFIG_PMW3610_FILTER_EMA
     int16_t ema_x;
     int16_t ema_y;
     bool ema_initialized;
+#endif
+
+#ifdef CONFIG_PMW3610_FILTER_1EURO
+    float euro_x_prev;
+    float euro_y_prev;
+    float euro_x_dx_prev;
+    float euro_y_dx_prev;
+    int64_t euro_t_prev;
+    bool euro_initialized;
 #endif
 };
 
