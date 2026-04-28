@@ -219,23 +219,57 @@ config PMW3610_AXIS_LOCK_RATIO
       For example, ratio=3 means if X is 3x larger than Y, Y is zeroed.
       Set to 0 to disable. Recommended: 3 for typical use.
 
-config PMW3610_EMA_FILTER
-    bool "Enable EMA smoothing filter"
-    default n
+choice PMW3610_SMOOTHING_FILTER
+    prompt "Smoothing filter for trackball movement"
+    default PMW3610_FILTER_NONE
+
+config PMW3610_FILTER_NONE
+    bool "No smoothing filter"
+
+config PMW3610_FILTER_EMA
+    bool "EMA (Exponential Moving Average)"
     help
-      Enable exponential moving average filter on X/Y movement
-      to reduce cursor jitter at low speed without dropping frames.
+      Fixed-alpha EMA filter with direction reversal reset.
+
+config PMW3610_FILTER_1EURO
+    bool "1-Euro Filter (speed-adaptive)"
+    help
+      Adaptive low-pass filter. Heavy smoothing at low speed,
+      light smoothing at high speed. Requires FPU.
+
+endchoice
 
 config PMW3610_EMA_ALPHA
     int "EMA alpha (current value weight, 1-99)"
     default 70
     range 1 99
-    depends on PMW3610_EMA_FILTER
+    depends on PMW3610_FILTER_EMA
+
+config PMW3610_1EURO_MIN_CUTOFF_X100
+    int "1-Euro min cutoff frequency x100 (Hz)"
+    default 150
+    range 10 1000
+    depends on PMW3610_FILTER_1EURO
     help
-      Weight of the current reading as percentage.
-      Higher = less smoothing, lower latency. Lower = more smoothing, more latency.
-      70 = light smoothing (recommended starting point).
-      Formula: output = (alpha * current + (100 - alpha) * previous) / 100
+      Minimum cutoff frequency (Hz, x100). 150 = 1.50 Hz.
+      Lower = more smoothing at low speed. Tune: decrease until jitter gone.
+
+config PMW3610_1EURO_BETA_X1000
+    int "1-Euro beta (speed coefficient) x1000"
+    default 50
+    range 0 500
+    depends on PMW3610_FILTER_1EURO
+    help
+      Speed sensitivity. 50 = 0.050. Higher = faster response to fast movement.
+      Tune: increase until lag at high speed is acceptable.
+
+config PMW3610_1EURO_D_CUTOFF_X100
+    int "1-Euro derivative cutoff frequency x100 (Hz)"
+    default 100
+    range 10 1000
+    depends on PMW3610_FILTER_1EURO
+    help
+      Cutoff for speed estimator. 100 = 1.00 Hz. Usually keep at default.
 
 module = PMW3610
 module-str = PMW3610
