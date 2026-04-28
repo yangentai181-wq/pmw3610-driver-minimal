@@ -17,6 +17,10 @@
 #include <zmk/keymap.h>
 #include "pmw3610.h"
 
+#ifdef CONFIG_PMW3610_FILTER_1EURO
+#include <math.h>
+#endif
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(pmw3610, CONFIG_INPUT_LOG_LEVEL);
 
@@ -578,6 +582,26 @@ static enum pixart_input_mode get_input_mode_for_current_layer(const struct devi
     return MOVE;
 }
 
+#ifdef CONFIG_PMW3610_FILTER_1EURO
+static inline float one_euro_smoothing_factor(float t_e, float cutoff) {
+    float r = 6.283185307f * cutoff * t_e;
+    return r / (r + 1.0f);
+}
+
+static float one_euro_filter_axis(float x_prev, float dx_prev, float x,
+                                  float t_e, float min_cutoff, float beta,
+                                  float d_cutoff, float *out_dx) {
+    float a_d = one_euro_smoothing_factor(t_e, d_cutoff);
+    float dx = (x - x_prev) / t_e;
+    float dx_hat = a_d * dx + (1.0f - a_d) * dx_prev;
+    *out_dx = dx_hat;
+
+    float cutoff = min_cutoff + beta * fabsf(dx_hat);
+    float a = one_euro_smoothing_factor(t_e, cutoff);
+    return a * x + (1.0f - a) * x_prev;
+}
+#endif
+
 static int pmw3610_report_data(const struct device *dev) {
     struct pixart_data *data = dev->data;
     uint8_t buf[PMW3610_BURST_SIZE];
@@ -772,14 +796,12 @@ static int pmw3610_report_data(const struct device *dev) {
         }
 #endif
 
-#ifdef CONFIG_PMW3610_EMA_FILTER
+#ifdef CONFIG_PMW3610_FILTER_EMA
         if (!data->ema_initialized) {
             data->ema_x = x;
             data->ema_y = y;
             data->ema_initialized = true;
         } else {
-            // Direction reversal reset: when direction flips with significant
-            // magnitude, reset EMA to current value to avoid lag at reversals.
             if (abs(x) >= 2 && ((x > 0 && data->ema_x < 0) || (x < 0 && data->ema_x > 0))) {
                 data->ema_x = x;
             } else {
@@ -791,6 +813,45 @@ static int pmw3610_report_data(const struct device *dev) {
             } else {
                 y = (CONFIG_PMW3610_EMA_ALPHA * y + (100 - CONFIG_PMW3610_EMA_ALPHA) * data->ema_y) / 100;
                 data->ema_y = y;
+            }
+        }
+#endif
+
+#ifdef CONFIG_PMW3610_FILTER_1EURO
+        {
+            int64_t now = k_uptime_get();
+            if (!data->euro_initialized) {
+                data->euro_x_prev = (float)x;
+                data->euro_y_prev = (float)y;
+                data->euro_x_dx_prev = 0.0f;
+                data->euro_y_dx_prev = 0.0f;
+                data->euro_t_prev = now;
+                data->euro_initialized = true;
+            } else {
+                float t_e = (float)(now - data->euro_t_prev) / 1000.0f;
+                if (t_e <= 0.0f || t_e > 1.0f) {
+                    t_e = 0.004f;
+                }
+                data->euro_t_prev = now;
+
+                float min_cutoff = CONFIG_PMW3610_1EURO_MIN_CUTOFF_X100 / 100.0f;
+                float beta = CONFIG_PMW3610_1EURO_BETA_X1000 / 1000.0f;
+                float d_cutoff = CONFIG_PMW3610_1EURO_D_CUTOFF_X100 / 100.0f;
+
+                float fx = one_euro_filter_axis(
+                    data->euro_x_prev, data->euro_x_dx_prev,
+                    (float)x, t_e, min_cutoff, beta, d_cutoff,
+                    &data->euro_x_dx_prev);
+                data->euro_x_prev = fx;
+
+                float fy = one_euro_filter_axis(
+                    data->euro_y_prev, data->euro_y_dx_prev,
+                    (float)y, t_e, min_cutoff, beta, d_cutoff,
+                    &data->euro_y_dx_prev);
+                data->euro_y_prev = fy;
+
+                x = (int16_t)(fx >= 0.0f ? fx + 0.5f : fx - 0.5f);
+                y = (int16_t)(fy >= 0.0f ? fy + 0.5f : fy - 0.5f);
             }
         }
 #endif
