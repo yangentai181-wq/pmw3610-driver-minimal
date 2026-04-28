@@ -850,8 +850,12 @@ static int pmw3610_report_data(const struct device *dev) {
                     &data->euro_y_dx_prev);
                 data->euro_y_prev = fy;
 
-                x = (int16_t)(fx >= 0.0f ? fx + 0.5f : fx - 0.5f);
-                y = (int16_t)(fy >= 0.0f ? fy + 0.5f : fy - 0.5f);
+                data->euro_x_remainder += fx;
+                data->euro_y_remainder += fy;
+                x = (int16_t)data->euro_x_remainder;
+                y = (int16_t)data->euro_y_remainder;
+                data->euro_x_remainder -= (float)x;
+                data->euro_y_remainder -= (float)y;
             }
         }
 #endif

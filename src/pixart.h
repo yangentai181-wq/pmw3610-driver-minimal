@@ -67,6 +67,8 @@ struct pixart_data {
     float euro_y_prev;
     float euro_x_dx_prev;
     float euro_y_dx_prev;
+    float euro_x_remainder;
+    float euro_y_remainder;
     int64_t euro_t_prev;
     bool euro_initialized;
 #endif
