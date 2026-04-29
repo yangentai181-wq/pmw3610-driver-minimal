@@ -822,16 +822,33 @@ static int pmw3610_report_data(const struct device *dev) {
 #ifdef CONFIG_PMW3610_FILTER_1EURO
         {
             int64_t now = k_uptime_get();
+
+            data->euro_x_pos += (float)x;
+            data->euro_y_pos += (float)y;
+
             if (!data->euro_initialized) {
-                data->euro_x_prev = (float)x;
-                data->euro_y_prev = (float)y;
+                data->euro_x_prev = data->euro_x_pos;
+                data->euro_y_prev = data->euro_y_pos;
                 data->euro_x_dx_prev = 0.0f;
                 data->euro_y_dx_prev = 0.0f;
+                data->euro_x_last_out = data->euro_x_pos;
+                data->euro_y_last_out = data->euro_y_pos;
+                data->euro_x_remainder = 0.0f;
+                data->euro_y_remainder = 0.0f;
                 data->euro_t_prev = now;
                 data->euro_initialized = true;
+
+                float scale_x = CONFIG_PMW3610_X_SCALE / 100.0f;
+                float scale_y = CONFIG_PMW3610_Y_SCALE / 100.0f;
+                data->euro_x_remainder += (float)x * scale_x;
+                data->euro_y_remainder += (float)y * scale_y;
+                x = (int16_t)data->euro_x_remainder;
+                y = (int16_t)data->euro_y_remainder;
+                data->euro_x_remainder -= (float)x;
+                data->euro_y_remainder -= (float)y;
             } else {
                 float t_e = (float)(now - data->euro_t_prev) / 1000.0f;
-                if (t_e <= 0.0f || t_e > 1.0f) {
+                if (t_e <= 0.0f) {
                     t_e = 0.004f;
                 }
                 data->euro_t_prev = now;
@@ -842,24 +859,40 @@ static int pmw3610_report_data(const struct device *dev) {
 
                 float fx = one_euro_filter_axis(
                     data->euro_x_prev, data->euro_x_dx_prev,
-                    (float)x, t_e, min_cutoff, beta, d_cutoff,
+                    data->euro_x_pos, t_e, min_cutoff, beta, d_cutoff,
                     &data->euro_x_dx_prev);
                 data->euro_x_prev = fx;
 
                 float fy = one_euro_filter_axis(
                     data->euro_y_prev, data->euro_y_dx_prev,
-                    (float)y, t_e, min_cutoff, beta, d_cutoff,
+                    data->euro_y_pos, t_e, min_cutoff, beta, d_cutoff,
                     &data->euro_y_dx_prev);
                 data->euro_y_prev = fy;
 
                 float scale_x = CONFIG_PMW3610_X_SCALE / 100.0f;
                 float scale_y = CONFIG_PMW3610_Y_SCALE / 100.0f;
-                data->euro_x_remainder += fx * scale_x;
-                data->euro_y_remainder += fy * scale_y;
+                data->euro_x_remainder += (fx - data->euro_x_last_out) * scale_x;
+                data->euro_y_remainder += (fy - data->euro_y_last_out) * scale_y;
+                data->euro_x_last_out = fx;
+                data->euro_y_last_out = fy;
+
                 x = (int16_t)data->euro_x_remainder;
                 y = (int16_t)data->euro_y_remainder;
                 data->euro_x_remainder -= (float)x;
                 data->euro_y_remainder -= (float)y;
+
+                if (fabsf(data->euro_x_pos) > 100000.0f) {
+                    float off = data->euro_x_pos;
+                    data->euro_x_pos -= off;
+                    data->euro_x_prev -= off;
+                    data->euro_x_last_out -= off;
+                }
+                if (fabsf(data->euro_y_pos) > 100000.0f) {
+                    float off = data->euro_y_pos;
+                    data->euro_y_pos -= off;
+                    data->euro_y_prev -= off;
+                    data->euro_y_last_out -= off;
+                }
             }
         }
 #endif

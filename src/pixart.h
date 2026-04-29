@@ -63,10 +63,14 @@ struct pixart_data {
 #endif
 
 #ifdef CONFIG_PMW3610_FILTER_1EURO
+    float euro_x_pos;
+    float euro_y_pos;
     float euro_x_prev;
     float euro_y_prev;
     float euro_x_dx_prev;
     float euro_y_dx_prev;
+    float euro_x_last_out;
+    float euro_y_last_out;
     float euro_x_remainder;
     float euro_y_remainder;
     int64_t euro_t_prev;
