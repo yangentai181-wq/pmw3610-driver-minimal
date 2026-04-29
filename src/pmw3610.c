@@ -21,6 +21,10 @@
 #include <math.h>
 #endif
 
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+#include "data_logger.h"
+#endif
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(pmw3610, CONFIG_INPUT_LOG_LEVEL);
 
@@ -606,6 +610,11 @@ static int pmw3610_report_data(const struct device *dev) {
     struct pixart_data *data = dev->data;
     uint8_t buf[PMW3610_BURST_SIZE];
 
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+    struct pmw3610_log_entry log_entry = {0};
+    log_entry.sensor_read_start_us = k_ticks_to_us_floor32(k_uptime_ticks());
+#endif
+
     if (unlikely(!data->ready)) {
         LOG_WRN("Device is not initialized yet");
         return -EBUSY;
@@ -645,8 +654,22 @@ static int pmw3610_report_data(const struct device *dev) {
         return err;
     }
 
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+    log_entry.sensor_read_end_us = k_ticks_to_us_floor32(k_uptime_ticks());
+    log_entry.motion_status = buf[0];
+    /* SQUAL is at burst byte 4 per PMW3610 datasheet (between XY_H and SHUTTER_HI). */
+    log_entry.squal = buf[4];
+    log_entry.shutter = ((uint16_t)(buf[PMW3610_SHUTTER_H_POS] & 0x01) << 8) +
+                        buf[PMW3610_SHUTTER_L_POS];
+#endif
+
     // Validate motion bit (bit 7 of MOTION register) - skip if no real motion detected
     if (!(buf[0] & 0x80)) {
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+        /* Push even on no-motion samples — useful for diagnosing idle drift. */
+        log_entry.device_us = k_ticks_to_us_floor32(k_uptime_ticks());
+        pmw3610_dlog_push(&log_entry);
+#endif
         return 0;
     }
 
@@ -654,6 +677,11 @@ static int pmw3610_report_data(const struct device *dev) {
         TOINT16((buf[PMW3610_X_L_POS] + ((buf[PMW3610_XY_H_POS] & 0xF0) << 4)), 12) / dividor;
     int16_t raw_y =
         TOINT16((buf[PMW3610_Y_L_POS] + ((buf[PMW3610_XY_H_POS] & 0x0F) << 8)), 12) / dividor;
+
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+    log_entry.raw_dx = raw_x;
+    log_entry.raw_dy = raw_y;
+#endif
 
       // X/Y axis scaling: skip here when 1-Euro is active (applied in float inside filter)
     #ifndef CONFIG_PMW3610_FILTER_1EURO
@@ -745,8 +773,17 @@ static int pmw3610_report_data(const struct device *dev) {
 #endif
 
     if (x == 0 && y == 0) {
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+        /* Push zero-motion sample so we can see "sensor reported nothing" timing. */
+        log_entry.device_us = k_ticks_to_us_floor32(k_uptime_ticks());
+        pmw3610_dlog_push(&log_entry);
+#endif
         return 0;
     }
+
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+    log_entry.filter_start_us = k_ticks_to_us_floor32(k_uptime_ticks());
+#endif
 
 #if CONFIG_PMW3610_DEADZONE > 0
     // Velocity gate + direction consistency filter (MOVE mode only):
@@ -905,8 +942,29 @@ static int pmw3610_report_data(const struct device *dev) {
             activate_automouse_layer();
         }
 #endif
+
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+        log_entry.filter_end_us = k_ticks_to_us_floor32(k_uptime_ticks());
+        log_entry.filt_dx = x;
+        log_entry.filt_dy = y;
+#ifdef CONFIG_PMW3610_FILTER_EMA
+        log_entry.filter_state_x = (float)data->ema_x;
+        log_entry.filter_state_y = (float)data->ema_y;
+#endif
+#ifdef CONFIG_PMW3610_FILTER_1EURO
+        log_entry.filter_state_x = data->euro_x_prev;
+        log_entry.filter_state_y = data->euro_y_prev;
+#endif
+#endif
+
         input_report_rel(dev, INPUT_REL_X, x, false, K_FOREVER);
         input_report_rel(dev, INPUT_REL_Y, y, true, K_FOREVER);
+
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+        log_entry.ble_send_us = k_ticks_to_us_floor32(k_uptime_ticks());
+        log_entry.device_us = log_entry.ble_send_us;
+        pmw3610_dlog_push(&log_entry);
+#endif
     } else {
         data->scroll_delta_x += x;
         data->scroll_delta_y += y;
@@ -992,6 +1050,10 @@ static int pmw3610_init(const struct device *dev) {
 
     // init smart algorithm flag;
     data->sw_smart_flag = false;
+
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+    pmw3610_dlog_init();
+#endif
 
     // init trigger handler work
     k_work_init(&data->trigger_work, pmw3610_work_callback);

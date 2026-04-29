@@ -76,6 +76,13 @@ struct pixart_data {
     int64_t euro_t_prev;
     bool euro_initialized;
 #endif
+
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+    /* Pending marker (set by &dlog_marker_a / _b behavior, consumed by next sample) */
+    uint8_t dlog_pending_marker;
+    /* Auto-freeze tracking */
+    int64_t dlog_low_velocity_since_ms;
+#endif
 };
 
 // device config data structure

@@ -271,6 +271,41 @@ config PMW3610_1EURO_D_CUTOFF_X100
     help
       Cutoff for speed estimator. 100 = 1.00 Hz. Usually keep at default.
 
+config PMW3610_DATA_LOGGER
+    bool "Enable in-memory ring buffer data logger"
+    default n
+    help
+      Capture per-sample sensor data (raw delta, SQUAL, shutter,
+      filter state, timestamps) into a RAM ring buffer for offline
+      analysis. Used to diagnose floaty cursor behavior. Drains
+      samples from oldest to newest; freeze the buffer with the
+      &dlog_freeze behavior, then dump via &dlog_dump.
+
+config PMW3610_DATA_LOGGER_BUFFER_SAMPLES
+    int "Ring buffer capacity in samples"
+    default 1250
+    range 250 5000
+    depends on PMW3610_DATA_LOGGER
+    help
+      Number of samples retained in the ring buffer. At 250Hz
+      polling, 1250 samples = 5 seconds of history. Each entry
+      is ~56 bytes, so 1250 samples uses ~70KB of RAM.
+
+config PMW3610_DATA_LOGGER_AUTO_FREEZE
+    bool "Auto-freeze when sustained low-velocity is detected"
+    default n
+    depends on PMW3610_DATA_LOGGER
+    help
+      Automatically freeze the ring buffer when the cursor has
+      been near-stationary for a configurable period. Useful for
+      catching the floaty moment without manual intervention.
+
+config PMW3610_DATA_LOGGER_AUTO_FREEZE_MS
+    int "Auto-freeze trigger duration (ms)"
+    default 2000
+    range 100 10000
+    depends on PMW3610_DATA_LOGGER_AUTO_FREEZE
+
 module = PMW3610
 module-str = PMW3610
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
