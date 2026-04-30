@@ -306,6 +306,17 @@ config PMW3610_DATA_LOGGER_AUTO_FREEZE_MS
     range 100 10000
     depends on PMW3610_DATA_LOGGER_AUTO_FREEZE
 
+config PMW3610_DATA_LOGGER_BLE
+    bool "Expose data logger over a custom BLE GATT service"
+    default y
+    depends on PMW3610_DATA_LOGGER && BT
+    help
+      Adds a custom GATT service (random 128-bit UUID) with a
+      "request" characteristic (host writes 0x01 to start dump)
+      and a "data" characteristic (notifies header + entries +
+      footer). Used by the host-side Python logger to retrieve
+      the ring buffer over the existing BLE link.
+
 module = PMW3610
 module-str = PMW3610
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
