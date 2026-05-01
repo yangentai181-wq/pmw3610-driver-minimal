@@ -11,8 +11,11 @@
 #include <string.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/logging/log.h>
 
 #include "data_logger.h"
+
+LOG_MODULE_REGISTER(dlog, CONFIG_PMW3610_LOG_LEVEL);
 
 #define DLOG_BUF_SAMPLES CONFIG_PMW3610_DATA_LOGGER_BUFFER_SAMPLES
 
@@ -30,6 +33,7 @@ void pmw3610_dlog_init(void) {
     atomic_set(&dlog_frozen, 0);
     atomic_set(&dlog_pending_marker, PMW3610_DLOG_MARKER_NONE);
     memset(dlog_buffer, 0, sizeof(dlog_buffer));
+    LOG_INF("init: buf=%u samples, %u bytes", DLOG_BUF_SAMPLES, (uint32_t)sizeof(dlog_buffer));
 }
 
 void pmw3610_dlog_push(const struct pmw3610_log_entry *entry) {
@@ -58,6 +62,7 @@ void pmw3610_dlog_push(const struct pmw3610_log_entry *entry) {
 
 void pmw3610_dlog_freeze(void) {
     atomic_set(&dlog_frozen, 1);
+    LOG_INF("frozen, count=%u, head=%u", dlog_count, dlog_head);
 }
 
 void pmw3610_dlog_clear(void) {
@@ -96,6 +101,7 @@ void pmw3610_dlog_set_marker(uint8_t marker_id) {
 
 void pmw3610_dlog_dump_uart(void) {
     uint32_t total = dlog_count;
+    LOG_INF("dump_uart: total=%u, frozen=%d", total, (int)atomic_get(&dlog_frozen));
     struct pmw3610_log_entry entry;
 
     printk("[DLOG_START] %u\n", total);
