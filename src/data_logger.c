@@ -65,6 +65,11 @@ void pmw3610_dlog_freeze(void) {
     LOG_INF("frozen, count=%u, head=%u", dlog_count, dlog_head);
 }
 
+void pmw3610_dlog_request_dump(void) {
+    LOG_INF("dump requested, count=%u", dlog_count);
+    pmw3610_dlog_dump_uart();
+}
+
 void pmw3610_dlog_clear(void) {
     atomic_set(&dlog_frozen, 0);
     dlog_head = 0;
