@@ -139,7 +139,7 @@ void pmw3610_dlog_dump_uart(void) {
                entry.motion_status,
                entry.marker_id,
                entry.flags);
-        k_msleep(2);
+        k_msleep(10);
     }
 
     printk("[DLOG_END]\n");
