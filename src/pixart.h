@@ -56,6 +56,9 @@ struct pixart_data {
     int8_t prev_sign_y;
 #endif
 
+    float move_remainder_x;
+    float move_remainder_y;
+
 #ifdef CONFIG_PMW3610_FILTER_EMA
     int16_t ema_x;
     int16_t ema_y;

@@ -683,15 +683,17 @@ static int pmw3610_report_data(const struct device *dev) {
     log_entry.raw_dy = raw_y;
 #endif
 
-      // X/Y axis scaling: skip here when 1-Euro is active (applied in float inside filter)
     #ifndef CONFIG_PMW3610_FILTER_1EURO
-    #if defined(CONFIG_PMW3610_X_SCALE) && CONFIG_PMW3610_X_SCALE != 100
-        raw_x = (raw_x * CONFIG_PMW3610_X_SCALE) / 100;
-    #endif
-
-    #if defined(CONFIG_PMW3610_Y_SCALE) && CONFIG_PMW3610_Y_SCALE != 100
-        raw_y = (raw_y * CONFIG_PMW3610_Y_SCALE) / 100;
-    #endif
+    {
+        float scale_x = CONFIG_PMW3610_X_SCALE / 100.0f;
+        float scale_y = CONFIG_PMW3610_Y_SCALE / 100.0f;
+        data->move_remainder_x += (float)raw_x * scale_x;
+        data->move_remainder_y += (float)raw_y * scale_y;
+        raw_x = (int16_t)data->move_remainder_x;
+        raw_y = (int16_t)data->move_remainder_y;
+        data->move_remainder_x -= (float)raw_x;
+        data->move_remainder_y -= (float)raw_y;
+    }
     #endif
     
 #ifdef CONFIG_PMW3610_ADJUSTABLE_MOUSESPEED
