@@ -93,3 +93,42 @@ bool pmw3610_dlog_get(uint32_t index, struct pmw3610_log_entry *out) {
 void pmw3610_dlog_set_marker(uint8_t marker_id) {
     atomic_set(&dlog_pending_marker, (atomic_val_t)marker_id);
 }
+
+void pmw3610_dlog_dump_uart(void) {
+    uint32_t total = dlog_count;
+    struct pmw3610_log_entry entry;
+
+    printk("[DLOG_START] %u\n", total);
+    printk("device_us,sensor_read_start_us,sensor_read_end_us,filter_start_us,"
+           "filter_end_us,ble_send_us,raw_dx,raw_dy,filt_dx,filt_dy,"
+           "squal,shutter,battery_mv,ble_conn_interval_units,"
+           "filter_state_x,filter_state_y,motion_status,marker_id,flags\n");
+
+    for (uint32_t i = 0; i < total; i++) {
+        if (!pmw3610_dlog_get(i, &entry)) {
+            break;
+        }
+        printk("%u,%u,%u,%u,%u,%u,"
+               "%d,%d,%d,%d,"
+               "%u,%u,%u,%u,"
+               "%d,%d,"
+               "%u,%u,%u\n",
+               entry.device_us,
+               entry.sensor_read_start_us,
+               entry.sensor_read_end_us,
+               entry.filter_start_us,
+               entry.filter_end_us,
+               entry.ble_send_us,
+               entry.raw_dx, entry.raw_dy,
+               entry.filt_dx, entry.filt_dy,
+               entry.squal, entry.shutter,
+               entry.battery_mv, entry.ble_conn_interval_units,
+               (int)(entry.filter_state_x * 1000),
+               (int)(entry.filter_state_y * 1000),
+               entry.motion_status,
+               entry.marker_id,
+               entry.flags);
+    }
+
+    printk("[DLOG_END]\n");
+}

@@ -67,6 +67,9 @@ bool pmw3610_dlog_get(uint32_t index, struct pmw3610_log_entry *out);
 /* Set the marker ID for the next push. Cleared after the next sample. */
 void pmw3610_dlog_set_marker(uint8_t marker_id);
 
+/* Dump all entries as CSV via printk (USB serial). */
+void pmw3610_dlog_dump_uart(void);
+
 #ifdef __cplusplus
 }
 #endif
