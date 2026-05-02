@@ -54,6 +54,7 @@ struct pixart_data {
     int64_t last_significant_time;
     int8_t prev_sign_x;
     int8_t prev_sign_y;
+    int64_t small_move_start_time;
 #endif
 
     float move_remainder_x;

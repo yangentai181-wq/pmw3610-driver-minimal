@@ -209,6 +209,16 @@ config PMW3610_DEADZONE_TIMEOUT_MS
       Shorter values reject noise faster but may clip very slow movements.
       Longer values preserve slow movements but may allow brief noise drift.
 
+config PMW3610_DRIFT_TIMEOUT_MS
+    int "Drift detection timeout (ms)"
+    default 300
+    range 0 1000
+    depends on PMW3610_DEADZONE > 0
+    help
+      Maximum duration of consecutive small movements in the same direction
+      before they are classified as sensor drift and suppressed.
+      Set to 0 to disable drift detection.
+
 config PMW3610_AXIS_LOCK_RATIO
     int "Dominant axis lock ratio (0=disabled)"
     default 3

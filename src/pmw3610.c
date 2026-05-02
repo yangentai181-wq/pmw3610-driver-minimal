@@ -800,12 +800,11 @@ static int pmw3610_report_data(const struct device *dev) {
                             abs(y) >= CONFIG_PMW3610_DEADZONE);
 
         if (significant) {
-            // Large movement - always report
             data->last_significant_time = now;
+            data->small_move_start_time = 0;
         } else if (now - data->last_significant_time < CONFIG_PMW3610_DEADZONE_TIMEOUT_MS) {
             // Recently had significant movement - pass through for smooth deceleration
         } else {
-            // Small movement, not recently active - check direction consistency
             int8_t sx = (x > 0) - (x < 0);
             int8_t sy = (y > 0) - (y < 0);
             bool consistent = (sx != 0 && sx == data->prev_sign_x) ||
@@ -813,13 +812,19 @@ static int pmw3610_report_data(const struct device *dev) {
             data->prev_sign_x = sx;
             data->prev_sign_y = sy;
 
-            if (consistent) {
-                // Same direction as previous frame - real slow movement
-                data->last_significant_time = now;
-            } else {
-                // Direction flipped - noise, suppress
+            if (!consistent) {
+                data->small_move_start_time = 0;
                 return 0;
             }
+
+#if CONFIG_PMW3610_DRIFT_TIMEOUT_MS > 0
+            if (data->small_move_start_time == 0) {
+                data->small_move_start_time = now;
+            } else if (now - data->small_move_start_time >= CONFIG_PMW3610_DRIFT_TIMEOUT_MS) {
+                return 0;
+            }
+#endif
+            data->last_significant_time = now;
         }
     }
 #endif
