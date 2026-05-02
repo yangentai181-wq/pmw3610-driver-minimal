@@ -209,6 +209,17 @@ config PMW3610_DEADZONE_TIMEOUT_MS
       Shorter values reject noise faster but may clip very slow movements.
       Longer values preserve slow movements but may allow brief noise drift.
 
+config PMW3610_DEADZONE_CLEAR
+    int "Drift timer clear threshold (sensor counts)"
+    default PMW3610_DEADZONE
+    range 1 20
+    depends on PMW3610_DEADZONE > 0
+    help
+      Movements >= this value reset the drift timer, indicating
+      clearly intentional movement. Movements between DEADZONE and
+      DEADZONE_CLEAR pass through but do NOT reset the drift timer.
+      Set equal to DEADZONE for original single-threshold behavior.
+
 config PMW3610_DRIFT_TIMEOUT_MS
     int "Drift detection timeout (ms)"
     default 300

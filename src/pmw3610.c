@@ -683,6 +683,66 @@ static int pmw3610_report_data(const struct device *dev) {
     log_entry.raw_dy = raw_y;
 #endif
 
+    if (raw_x == 0 && raw_y == 0) {
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+        log_entry.device_us = k_ticks_to_us_floor32(k_uptime_ticks());
+        pmw3610_dlog_push(&log_entry);
+#endif
+        return 0;
+    }
+
+#if CONFIG_PMW3610_DEADZONE > 0
+    if (input_mode != SCROLL) {
+        int64_t now = k_uptime_get();
+        bool clear = (abs(raw_x) >= CONFIG_PMW3610_DEADZONE_CLEAR ||
+                      abs(raw_y) >= CONFIG_PMW3610_DEADZONE_CLEAR);
+        bool significant = clear || (abs(raw_x) >= CONFIG_PMW3610_DEADZONE ||
+                                     abs(raw_y) >= CONFIG_PMW3610_DEADZONE);
+
+        if (clear) {
+            data->last_significant_time = now;
+            data->small_move_start_time = 0;
+        } else if (significant) {
+            data->last_significant_time = now;
+#if CONFIG_PMW3610_DRIFT_TIMEOUT_MS > 0
+            if (data->small_move_start_time == 0) {
+                data->small_move_start_time = now;
+            } else if (now - data->small_move_start_time >= CONFIG_PMW3610_DRIFT_TIMEOUT_MS) {
+                return 0;
+            }
+#endif
+        } else if (now - data->last_significant_time < CONFIG_PMW3610_DEADZONE_TIMEOUT_MS) {
+#if CONFIG_PMW3610_DRIFT_TIMEOUT_MS > 0
+            if (data->small_move_start_time != 0 &&
+                now - data->small_move_start_time >= CONFIG_PMW3610_DRIFT_TIMEOUT_MS) {
+                return 0;
+            }
+#endif
+        } else {
+            int8_t sx = (raw_x > 0) - (raw_x < 0);
+            int8_t sy = (raw_y > 0) - (raw_y < 0);
+            bool consistent = (sx != 0 && sx == data->prev_sign_x) ||
+                              (sy != 0 && sy == data->prev_sign_y);
+            data->prev_sign_x = sx;
+            data->prev_sign_y = sy;
+
+            if (!consistent) {
+                data->small_move_start_time = 0;
+                return 0;
+            }
+
+#if CONFIG_PMW3610_DRIFT_TIMEOUT_MS > 0
+            if (data->small_move_start_time == 0) {
+                data->small_move_start_time = now;
+            } else if (now - data->small_move_start_time >= CONFIG_PMW3610_DRIFT_TIMEOUT_MS) {
+                return 0;
+            }
+#endif
+            data->last_significant_time = now;
+        }
+    }
+#endif
+
     #ifndef CONFIG_PMW3610_FILTER_1EURO
     {
         float scale_x = CONFIG_PMW3610_X_SCALE / 100.0f;
@@ -785,48 +845,6 @@ static int pmw3610_report_data(const struct device *dev) {
 
 #ifdef CONFIG_PMW3610_DATA_LOGGER
     log_entry.filter_start_us = k_ticks_to_us_floor32(k_uptime_ticks());
-#endif
-
-#if CONFIG_PMW3610_DEADZONE > 0
-    // Velocity gate + direction consistency filter (MOVE mode only):
-    // - Large movement (>= threshold): always pass through at full 250Hz
-    // - Small movement after recent large: pass through (smooth deceleration)
-    // - Small movement from stationary: pass only if direction is consistent
-    //   with previous frame (real slow movement), suppress if direction
-    //   flips (random noise)
-    if (input_mode != SCROLL) {
-        int64_t now = k_uptime_get();
-        bool significant = (abs(x) >= CONFIG_PMW3610_DEADZONE ||
-                            abs(y) >= CONFIG_PMW3610_DEADZONE);
-
-        if (significant) {
-            data->last_significant_time = now;
-            data->small_move_start_time = 0;
-        } else if (now - data->last_significant_time < CONFIG_PMW3610_DEADZONE_TIMEOUT_MS) {
-            // Recently had significant movement - pass through for smooth deceleration
-        } else {
-            int8_t sx = (x > 0) - (x < 0);
-            int8_t sy = (y > 0) - (y < 0);
-            bool consistent = (sx != 0 && sx == data->prev_sign_x) ||
-                              (sy != 0 && sy == data->prev_sign_y);
-            data->prev_sign_x = sx;
-            data->prev_sign_y = sy;
-
-            if (!consistent) {
-                data->small_move_start_time = 0;
-                return 0;
-            }
-
-#if CONFIG_PMW3610_DRIFT_TIMEOUT_MS > 0
-            if (data->small_move_start_time == 0) {
-                data->small_move_start_time = now;
-            } else if (now - data->small_move_start_time >= CONFIG_PMW3610_DRIFT_TIMEOUT_MS) {
-                return 0;
-            }
-#endif
-            data->last_significant_time = now;
-        }
-    }
 #endif
 
     if (input_mode != SCROLL) {
