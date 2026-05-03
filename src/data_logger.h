@@ -12,6 +12,8 @@ extern "C" {
 #define PMW3610_DLOG_MARKER_A    0x01
 #define PMW3610_DLOG_MARKER_B    0x02
 
+#define PMW3610_DLOG_FLAG_DZ_SUPPRESSED 0x01
+
 /**
  * Per-sample log entry. Packed for compact storage in the ring buffer.
  * Size target: ~56 bytes/entry to keep 1250-sample buffer under 70KB.

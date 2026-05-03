@@ -49,14 +49,6 @@ struct pixart_data {
     // for pmw3610 smart algorithm
     bool sw_smart_flag;
 
-#if CONFIG_PMW3610_DEADZONE > 0
-    // velocity gate + direction consistency filter
-    int64_t last_significant_time;
-    int8_t prev_sign_x;
-    int8_t prev_sign_y;
-    int64_t small_move_start_time;
-#endif
-
     float move_remainder_x;
     float move_remainder_y;
 

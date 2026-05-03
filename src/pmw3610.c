@@ -693,52 +693,17 @@ static int pmw3610_report_data(const struct device *dev) {
 
 #if CONFIG_PMW3610_DEADZONE > 0
     if (input_mode != SCROLL) {
-        int64_t now = k_uptime_get();
-        bool clear = (abs(raw_x) >= CONFIG_PMW3610_DEADZONE_CLEAR ||
-                      abs(raw_y) >= CONFIG_PMW3610_DEADZONE_CLEAR);
-        bool significant = clear || (abs(raw_x) >= CONFIG_PMW3610_DEADZONE ||
-                                     abs(raw_y) >= CONFIG_PMW3610_DEADZONE);
-
-        if (clear) {
-            data->last_significant_time = now;
-            data->small_move_start_time = 0;
-        } else if (significant) {
-            data->last_significant_time = now;
-#if CONFIG_PMW3610_DRIFT_TIMEOUT_MS > 0
-            if (data->small_move_start_time == 0) {
-                data->small_move_start_time = now;
-            } else if (now - data->small_move_start_time >= CONFIG_PMW3610_DRIFT_TIMEOUT_MS) {
-                return 0;
-            }
+        int16_t abs_x = abs(raw_x);
+        int16_t abs_y = abs(raw_y);
+        if ((abs_x > abs_y ? abs_x : abs_y) < CONFIG_PMW3610_DEADZONE) {
+            data->move_remainder_x = 0.0f;
+            data->move_remainder_y = 0.0f;
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+            log_entry.flags = PMW3610_DLOG_FLAG_DZ_SUPPRESSED;
+            log_entry.device_us = k_ticks_to_us_floor32(k_uptime_ticks());
+            pmw3610_dlog_push(&log_entry);
 #endif
-        } else if (now - data->last_significant_time < CONFIG_PMW3610_DEADZONE_TIMEOUT_MS) {
-#if CONFIG_PMW3610_DRIFT_TIMEOUT_MS > 0
-            if (data->small_move_start_time != 0 &&
-                now - data->small_move_start_time >= CONFIG_PMW3610_DRIFT_TIMEOUT_MS) {
-                return 0;
-            }
-#endif
-        } else {
-            int8_t sx = (raw_x > 0) - (raw_x < 0);
-            int8_t sy = (raw_y > 0) - (raw_y < 0);
-            bool consistent = (sx != 0 && sx == data->prev_sign_x) ||
-                              (sy != 0 && sy == data->prev_sign_y);
-            data->prev_sign_x = sx;
-            data->prev_sign_y = sy;
-
-            if (!consistent) {
-                data->small_move_start_time = 0;
-                return 0;
-            }
-
-#if CONFIG_PMW3610_DRIFT_TIMEOUT_MS > 0
-            if (data->small_move_start_time == 0) {
-                data->small_move_start_time = now;
-            } else if (now - data->small_move_start_time >= CONFIG_PMW3610_DRIFT_TIMEOUT_MS) {
-                return 0;
-            }
-#endif
-            data->last_significant_time = now;
+            return 0;
         }
     }
 #endif
