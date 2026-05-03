@@ -695,7 +695,23 @@ static int pmw3610_report_data(const struct device *dev) {
     if (input_mode != SCROLL) {
         int16_t abs_x = abs(raw_x);
         int16_t abs_y = abs(raw_y);
-        if ((abs_x > abs_y ? abs_x : abs_y) < CONFIG_PMW3610_DEADZONE) {
+        int16_t max_raw = (abs_x > abs_y ? abs_x : abs_y);
+
+        if (max_raw >= CONFIG_PMW3610_DEADZONE_CLEAR) {
+            data->last_move_time = k_uptime_get();
+        } else if (max_raw >= CONFIG_PMW3610_DEADZONE) {
+            int64_t elapsed = k_uptime_get() - data->last_move_time;
+            if (elapsed > CONFIG_PMW3610_DEADZONE_TIMEOUT_MS) {
+                data->move_remainder_x = 0.0f;
+                data->move_remainder_y = 0.0f;
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+                log_entry.flags = PMW3610_DLOG_FLAG_DZ_SUPPRESSED;
+                log_entry.device_us = k_ticks_to_us_floor32(k_uptime_ticks());
+                pmw3610_dlog_push(&log_entry);
+#endif
+                return 0;
+            }
+        } else {
             data->move_remainder_x = 0.0f;
             data->move_remainder_y = 0.0f;
 #ifdef CONFIG_PMW3610_DATA_LOGGER

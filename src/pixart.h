@@ -49,6 +49,10 @@ struct pixart_data {
     // for pmw3610 smart algorithm
     bool sw_smart_flag;
 
+#if CONFIG_PMW3610_DEADZONE > 0
+    int64_t last_move_time;
+#endif
+
     float move_remainder_x;
     float move_remainder_y;
 

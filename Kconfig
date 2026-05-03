@@ -189,44 +189,32 @@ config PMW3610_MOVEMENT_THRESHOLD
         This helps prevent accidental activation during typing.
 
 config PMW3610_DEADZONE
-    int "Hard cutoff deadzone in sensor counts (0=disabled)"
+    int "Hard cutoff deadzone floor (0=disabled)"
     default 4
     range 0 10
     help
-      Hard cutoff threshold. Frames with max(|raw_x|, |raw_y|) below
-      this value are suppressed as sensor noise. Set to 4 for
-      CPI 1600 with 43% scaling (proven zero drift, zero movement loss).
+      Hard floor threshold. Frames with max(|raw_x|, |raw_y|) below
+      this value are always suppressed as sensor noise.
+
+config PMW3610_DEADZONE_CLEAR
+    int "Active movement threshold"
+    default 6
+    range 2 15
+    depends on PMW3610_DEADZONE > 0
+    help
+      Frames at or above this value are considered intentional movement
+      and refresh the grace timer. Between DEADZONE and DEADZONE_CLEAR
+      is the grace zone where frames pass only during active movement.
 
 config PMW3610_DEADZONE_TIMEOUT_MS
-    int "Dead zone accumulator timeout in milliseconds"
-    default 80
+    int "Grace period duration in milliseconds"
+    default 100
     range 20 500
     depends on PMW3610_DEADZONE > 0
     help
-      Time after which accumulated sub-threshold movements are discarded.
-      Shorter values reject noise faster but may clip very slow movements.
-      Longer values preserve slow movements but may allow brief noise drift.
-
-config PMW3610_DEADZONE_CLEAR
-    int "Drift timer clear threshold (sensor counts)"
-    default PMW3610_DEADZONE
-    range 1 20
-    depends on PMW3610_DEADZONE > 0
-    help
-      Movements >= this value reset the drift timer, indicating
-      clearly intentional movement. Movements between DEADZONE and
-      DEADZONE_CLEAR pass through but do NOT reset the drift timer.
-      Set equal to DEADZONE for original single-threshold behavior.
-
-config PMW3610_DRIFT_TIMEOUT_MS
-    int "Drift detection timeout (ms)"
-    default 300
-    range 0 1000
-    depends on PMW3610_DEADZONE > 0
-    help
-      Maximum duration of consecutive small movements in the same direction
-      before they are classified as sensor drift and suppressed.
-      Set to 0 to disable drift detection.
+      After the last frame above DEADZONE_CLEAR, frames in the grace
+      zone are allowed for this duration. After timeout, they are
+      suppressed as idle noise.
 
 config PMW3610_AXIS_LOCK_RATIO
     int "Dominant axis lock ratio (0=disabled)"
