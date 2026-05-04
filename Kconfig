@@ -198,7 +198,7 @@ config PMW3610_DEADZONE
 
 config PMW3610_DEADZONE_CLEAR
     int "Active movement threshold"
-    default 6
+    default 5
     range 2 15
     depends on PMW3610_DEADZONE > 0
     help
@@ -215,6 +215,26 @@ config PMW3610_DEADZONE_TIMEOUT_MS
       After the last frame above DEADZONE_CLEAR, frames in the grace
       zone are allowed for this duration. After timeout, they are
       suppressed as idle noise.
+
+config PMW3610_DEADZONE_CONSEC_FRAMES
+    int "Consecutive frames at CLEAR threshold to activate grace"
+    default 2
+    range 1 6
+    depends on PMW3610_DEADZONE > 0
+    help
+      Number of consecutive frames with max_raw >= DEADZONE_CLEAR
+      required before activating grace for the first time.
+      After first activation, a single frame refreshes the timer.
+
+config PMW3610_DEADZONE_REMAINDER_CAP_X10
+    int "Max remainder accumulation during suppression (x10)"
+    default 10
+    range 0 20
+    depends on PMW3610_DEADZONE > 0
+    help
+      Cap for move_remainder accumulation during Zone B suppression,
+      multiplied by 10. 10 = 1.0 pixel max. 0 = disable accumulation
+      and zero remainder on suppression (legacy behavior).
 
 config PMW3610_AXIS_LOCK_RATIO
     int "Dominant axis lock ratio (0=disabled)"

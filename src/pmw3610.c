@@ -696,26 +696,56 @@ static int pmw3610_report_data(const struct device *dev) {
         int16_t abs_x = abs(raw_x);
         int16_t abs_y = abs(raw_y);
         int16_t max_raw = (abs_x > abs_y ? abs_x : abs_y);
+        bool dz_pass = false;
 
         if (max_raw >= CONFIG_PMW3610_DEADZONE_CLEAR) {
-            data->last_move_time = k_uptime_get();
+            data->dz_consec_count++;
+            if (data->dz_grace_activated ||
+                data->dz_consec_count >= CONFIG_PMW3610_DEADZONE_CONSEC_FRAMES) {
+                data->last_move_time = k_uptime_get();
+                data->dz_grace_activated = true;
+                dz_pass = true;
+            }
         } else if (max_raw >= CONFIG_PMW3610_DEADZONE) {
-            int64_t elapsed = k_uptime_get() - data->last_move_time;
-            if (elapsed > CONFIG_PMW3610_DEADZONE_TIMEOUT_MS) {
-                data->move_remainder_x = 0.0f;
-                data->move_remainder_y = 0.0f;
-#ifdef CONFIG_PMW3610_DATA_LOGGER
-                log_entry.flags = PMW3610_DLOG_FLAG_DZ_SUPPRESSED;
-                log_entry.device_us = k_ticks_to_us_floor32(k_uptime_ticks());
-                pmw3610_dlog_push(&log_entry);
-#endif
-                return 0;
+            data->dz_consec_count = 0;
+            if (data->dz_grace_activated) {
+                int64_t elapsed = k_uptime_get() - data->last_move_time;
+                if (elapsed <= CONFIG_PMW3610_DEADZONE_TIMEOUT_MS) {
+                    dz_pass = true;
+                } else {
+                    data->dz_grace_activated = false;
+                }
             }
         } else {
+            data->dz_consec_count = 0;
+            data->dz_grace_activated = false;
             data->move_remainder_x = 0.0f;
             data->move_remainder_y = 0.0f;
 #ifdef CONFIG_PMW3610_DATA_LOGGER
             log_entry.flags = PMW3610_DLOG_FLAG_DZ_SUPPRESSED;
+            log_entry.device_us = k_ticks_to_us_floor32(k_uptime_ticks());
+            pmw3610_dlog_push(&log_entry);
+#endif
+            return 0;
+        }
+
+        if (!dz_pass) {
+#if CONFIG_PMW3610_DEADZONE_REMAINDER_CAP_X10 > 0
+            float cap = CONFIG_PMW3610_DEADZONE_REMAINDER_CAP_X10 / 10.0f;
+            float scale_x = CONFIG_PMW3610_X_SCALE / 100.0f;
+            float scale_y = CONFIG_PMW3610_Y_SCALE / 100.0f;
+            data->move_remainder_x += (float)raw_x * scale_x;
+            data->move_remainder_y += (float)raw_y * scale_y;
+            if (data->move_remainder_x > cap) { data->move_remainder_x = cap; }
+            if (data->move_remainder_x < -cap) { data->move_remainder_x = -cap; }
+            if (data->move_remainder_y > cap) { data->move_remainder_y = cap; }
+            if (data->move_remainder_y < -cap) { data->move_remainder_y = -cap; }
+#else
+            data->move_remainder_x = 0.0f;
+            data->move_remainder_y = 0.0f;
+#endif
+#ifdef CONFIG_PMW3610_DATA_LOGGER
+            log_entry.flags = PMW3610_DLOG_FLAG_DZ_SUPPRESSED | PMW3610_DLOG_FLAG_DZ_ACCUM;
             log_entry.device_us = k_ticks_to_us_floor32(k_uptime_ticks());
             pmw3610_dlog_push(&log_entry);
 #endif

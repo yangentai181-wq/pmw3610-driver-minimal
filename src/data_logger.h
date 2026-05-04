@@ -13,6 +13,7 @@ extern "C" {
 #define PMW3610_DLOG_MARKER_B    0x02
 
 #define PMW3610_DLOG_FLAG_DZ_SUPPRESSED 0x01
+#define PMW3610_DLOG_FLAG_DZ_ACCUM      0x02
 
 /**
  * Per-sample log entry. Packed for compact storage in the ring buffer.
