@@ -707,7 +707,6 @@ static int pmw3610_report_data(const struct device *dev) {
                 dz_pass = true;
             }
         } else if (max_raw >= CONFIG_PMW3610_DEADZONE) {
-            data->dz_consec_count = 0;
             if (data->dz_grace_activated) {
                 int64_t elapsed = k_uptime_get() - data->last_move_time;
                 if (elapsed <= CONFIG_PMW3610_DEADZONE_TIMEOUT_MS) {
