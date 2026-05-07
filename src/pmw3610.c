@@ -699,6 +699,7 @@ static int pmw3610_report_data(const struct device *dev) {
         bool dz_pass = false;
 
         if (max_raw >= CONFIG_PMW3610_DEADZONE_CLEAR) {
+            data->dz_zone_a_count = 0;
             data->dz_consec_count++;
             if (data->dz_grace_activated ||
                 data->dz_consec_count >= CONFIG_PMW3610_DEADZONE_CONSEC_FRAMES) {
@@ -707,6 +708,7 @@ static int pmw3610_report_data(const struct device *dev) {
                 dz_pass = true;
             }
         } else if (max_raw >= CONFIG_PMW3610_DEADZONE) {
+            data->dz_zone_a_count = 0;
             if (data->dz_grace_activated) {
                 int64_t elapsed = k_uptime_get() - data->last_move_time;
                 if (elapsed <= CONFIG_PMW3610_DEADZONE_TIMEOUT_MS) {
@@ -716,10 +718,13 @@ static int pmw3610_report_data(const struct device *dev) {
                 }
             }
         } else {
-            data->dz_consec_count = 0;
-            data->dz_grace_activated = false;
-            data->move_remainder_x = 0.0f;
-            data->move_remainder_y = 0.0f;
+            data->dz_zone_a_count++;
+            if (data->dz_zone_a_count >= CONFIG_PMW3610_DEADZONE_ZONE_A_CONSEC) {
+                data->dz_consec_count = 0;
+                data->dz_grace_activated = false;
+                data->move_remainder_x = 0.0f;
+                data->move_remainder_y = 0.0f;
+            }
 #ifdef CONFIG_PMW3610_DATA_LOGGER
             log_entry.flags = PMW3610_DLOG_FLAG_DZ_SUPPRESSED;
             log_entry.device_us = k_ticks_to_us_floor32(k_uptime_ticks());

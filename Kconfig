@@ -226,6 +226,16 @@ config PMW3610_DEADZONE_CONSEC_FRAMES
       required before activating grace for the first time.
       After first activation, a single frame refreshes the timer.
 
+config PMW3610_DEADZONE_ZONE_A_CONSEC
+    int "Consecutive Zone A frames to deactivate grace"
+    default 3
+    range 1 6
+    depends on PMW3610_DEADZONE > 0
+    help
+      Number of consecutive frames below DEADZONE required before
+      deactivating grace and resetting state. Prevents isolated
+      low frames during slow movement from killing active tracking.
+
 config PMW3610_DEADZONE_REMAINDER_CAP_X10
     int "Max remainder accumulation during suppression (x10)"
     default 10

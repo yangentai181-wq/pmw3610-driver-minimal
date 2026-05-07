@@ -52,6 +52,7 @@ struct pixart_data {
 #if CONFIG_PMW3610_DEADZONE > 0
     int64_t last_move_time;
     uint8_t dz_consec_count;
+    uint8_t dz_zone_a_count;
     bool    dz_grace_activated;
 #endif
 
