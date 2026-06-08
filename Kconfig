@@ -343,6 +343,24 @@ config PMW3610_DATA_LOGGER_AUTO_FREEZE_MS
     range 100 10000
     depends on PMW3610_DATA_LOGGER_AUTO_FREEZE
 
+config PMW3610_DATA_LOGGER_ANOMALY_FREEZE
+    bool "Auto-freeze on anomalous raw delta spike"
+    default y
+    depends on PMW3610_DATA_LOGGER
+    help
+      Automatically freeze the ring buffer when a single raw delta
+      exceeds the anomaly threshold. Captures cursor jump events
+      for post-mortem analysis.
+
+config PMW3610_DATA_LOGGER_ANOMALY_THRESHOLD
+    int "Anomaly threshold for raw delta (absolute)"
+    default 200
+    range 50 2047
+    depends on PMW3610_DATA_LOGGER_ANOMALY_FREEZE
+    help
+      At CPI=3200 / 250Hz, normal fast flick produces raw 50-150.
+      Values above 200 indicate a likely cursor jump event.
+
 config PMW3610_DATA_LOGGER_BLE
     bool "Expose data logger over a custom BLE GATT service"
     default y

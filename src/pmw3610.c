@@ -683,6 +683,17 @@ static int pmw3610_report_data(const struct device *dev) {
     log_entry.raw_dy = raw_y;
 #endif
 
+#ifdef CONFIG_PMW3610_DATA_LOGGER_ANOMALY_FREEZE
+    if (abs(raw_x) > CONFIG_PMW3610_DATA_LOGGER_ANOMALY_THRESHOLD ||
+        abs(raw_y) > CONFIG_PMW3610_DATA_LOGGER_ANOMALY_THRESHOLD) {
+        log_entry.flags |= PMW3610_DLOG_FLAG_ANOMALY;
+        log_entry.device_us = k_ticks_to_us_floor32(k_uptime_ticks());
+        pmw3610_dlog_push(&log_entry);
+        pmw3610_dlog_freeze();
+        LOG_WRN("ANOMALY raw_x=%d raw_y=%d — buffer frozen", raw_x, raw_y);
+    }
+#endif
+
     if (raw_x == 0 && raw_y == 0) {
 #ifdef CONFIG_PMW3610_DATA_LOGGER
         log_entry.device_us = k_ticks_to_us_floor32(k_uptime_ticks());
