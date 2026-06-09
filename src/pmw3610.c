@@ -28,6 +28,13 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(pmw3610, CONFIG_INPUT_LOG_LEVEL);
 
+#define PMW3610_WORK_QUEUE_STACK_SIZE 1024
+#define PMW3610_WORK_QUEUE_PRIORITY 2
+
+K_THREAD_STACK_DEFINE(pmw3610_work_q_stack, PMW3610_WORK_QUEUE_STACK_SIZE);
+static struct k_work_q pmw3610_work_q;
+static bool pmw3610_work_q_started = false;
+
 //////// Sensor initialization steps definition //////////
 // init is done in non-blocking manner (i.e., async), a //
 // delayable work is defined for this purpose           //
@@ -546,7 +553,7 @@ static void pmw3610_async_init(struct k_work *work) {
             LOG_INF("PMW3610 initialized");
             set_interrupt(dev, true);
         } else {
-            k_work_schedule(&data->init_work, K_MSEC(async_init_delay[data->async_init_step]));
+            k_work_schedule_for_queue(&pmw3610_work_q, &data->init_work, K_MSEC(async_init_delay[data->async_init_step]));
         }
     }
 }
@@ -1048,8 +1055,7 @@ static void pmw3610_gpio_callback(const struct device *gpiob, struct gpio_callba
 
     set_interrupt(dev, false);
 
-    // submit the real handler work
-    k_work_submit(&data->trigger_work);
+    k_work_submit_to_queue(&pmw3610_work_q, &data->trigger_work);
 }
 
 static void pmw3610_work_callback(struct k_work *work) {
@@ -1110,7 +1116,14 @@ static int pmw3610_init(const struct device *dev) {
     pmw3610_dlog_init();
 #endif
 
-    // init trigger handler work
+    if (!pmw3610_work_q_started) {
+        struct k_work_queue_config queue_config = {.name = "pmw3610"};
+        k_work_queue_start(&pmw3610_work_q, pmw3610_work_q_stack,
+                           K_THREAD_STACK_SIZEOF(pmw3610_work_q_stack),
+                           PMW3610_WORK_QUEUE_PRIORITY, &queue_config);
+        pmw3610_work_q_started = true;
+    }
+
     k_work_init(&data->trigger_work, pmw3610_work_callback);
 
     // check readiness of cs gpio pin and init it to inactive
@@ -1138,7 +1151,7 @@ static int pmw3610_init(const struct device *dev) {
     // The sensor is ready to work (i.e., data->ready=true after the above steps are finished)
     k_work_init_delayable(&data->init_work, pmw3610_async_init);
 
-    k_work_schedule(&data->init_work, K_MSEC(async_init_delay[data->async_init_step]));
+    k_work_schedule_for_queue(&pmw3610_work_q, &data->init_work, K_MSEC(async_init_delay[data->async_init_step]));
 
     return err;
 }
