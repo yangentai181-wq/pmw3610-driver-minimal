@@ -699,10 +699,13 @@ static int pmw3610_report_data(const struct device *dev) {
         pmw3610_dlog_freeze();
         LOG_WRN("ANOMALY raw_x=%d raw_y=%d — buffer frozen", raw_x, raw_y);
     }
-    if (raw_x > 127) { raw_x = 127; }
-    if (raw_x < -127) { raw_x = -127; }
-    if (raw_y > 127) { raw_y = 127; }
-    if (raw_y < -127) { raw_y = -127; }
+#endif
+
+#ifdef CONFIG_PMW3610_DELTA_CLAMP
+    if (raw_x > CONFIG_PMW3610_DELTA_CLAMP_MAX) { raw_x = CONFIG_PMW3610_DELTA_CLAMP_MAX; }
+    if (raw_x < -CONFIG_PMW3610_DELTA_CLAMP_MAX) { raw_x = -CONFIG_PMW3610_DELTA_CLAMP_MAX; }
+    if (raw_y > CONFIG_PMW3610_DELTA_CLAMP_MAX) { raw_y = CONFIG_PMW3610_DELTA_CLAMP_MAX; }
+    if (raw_y < -CONFIG_PMW3610_DELTA_CLAMP_MAX) { raw_y = -CONFIG_PMW3610_DELTA_CLAMP_MAX; }
 #endif
 
     if (raw_x == 0 && raw_y == 0) {

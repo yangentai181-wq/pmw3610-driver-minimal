@@ -372,6 +372,24 @@ config PMW3610_DATA_LOGGER_BLE
       footer). Used by the host-side Python logger to retrieve
       the ring buffer over the existing BLE link.
 
+config PMW3610_DELTA_CLAMP
+    bool "Clamp raw delta to prevent cursor teleportation"
+    default y
+    help
+      Clamp each axis of the raw sensor delta to +-PMW3610_DELTA_CLAMP_MAX
+      before scaling. Prevents cursor jumps caused by motion accumulation
+      during polling gaps.
+
+config PMW3610_DELTA_CLAMP_MAX
+    int "Maximum allowed raw delta per axis"
+    default 127
+    range 50 2047
+    depends on PMW3610_DELTA_CLAMP
+    help
+      Raw delta values exceeding this threshold on either axis are clamped.
+      At CPI=3200 and 250Hz polling, 127 corresponds to approximately
+      250 mm/s ball movement.
+
 module = PMW3610
 module-str = PMW3610
 source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
