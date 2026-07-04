@@ -14,6 +14,7 @@
 #include <zephyr/logging/log.h>
 
 #include "data_logger.h"
+#include <zmk/mk2_ble_diag.h>
 
 LOG_MODULE_REGISTER(dlog, CONFIG_PMW3610_LOG_LEVEL);
 
@@ -74,6 +75,9 @@ void pmw3610_dlog_clear(void) {
     atomic_set(&dlog_frozen, 0);
     dlog_head = 0;
     dlog_count = 0;
+    /* Reset BLE diagnostics so the dump footer reflects the measurement window
+     * (no-op unless CONFIG_MK2_BLE_DIAG). */
+    mk2_ble_diag_reset();
 }
 
 bool pmw3610_dlog_is_frozen(void) {
@@ -143,4 +147,7 @@ void pmw3610_dlog_dump_uart(void) {
     }
 
     printk("[DLOG_END]\n");
+
+    /* BLE HID notify-failure footer (no-op unless CONFIG_MK2_BLE_DIAG). */
+    mk2_ble_diag_dump();
 }

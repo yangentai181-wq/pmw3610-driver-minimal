@@ -15,6 +15,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/input/input.h>
 #include <zmk/keymap.h>
+#include <zmk/mk2_ble_diag.h>
 #include "pmw3610.h"
 
 #ifdef CONFIG_PMW3610_FILTER_1EURO
@@ -620,6 +621,10 @@ static int pmw3610_report_data(const struct device *dev) {
 #ifdef CONFIG_PMW3610_DATA_LOGGER
     struct pmw3610_log_entry log_entry = {0};
     log_entry.sensor_read_start_us = k_ticks_to_us_floor32(k_uptime_ticks());
+    /* Stamp the current host connection interval onto every sample so BLE-only
+     * sessions show interval degradation correlated with markers (no-op unless
+     * CONFIG_MK2_BLE_DIAG). */
+    log_entry.ble_conn_interval_units = mk2_ble_diag_interval_units();
 #endif
 
     if (unlikely(!data->ready)) {
