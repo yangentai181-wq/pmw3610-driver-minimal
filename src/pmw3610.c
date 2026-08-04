@@ -16,7 +16,13 @@
 #include <zephyr/input/input.h>
 #include <zmk/keymap.h>
 #include <zmk/mk2_ble_diag.h>
+#include <zmk/drivers/pmw3610_runtime.h>
 #include "pmw3610.h"
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+#include <zephyr/settings/settings.h>
+#include <zephyr/sys/printk.h>
+#endif
 
 #ifdef CONFIG_PMW3610_FILTER_1EURO
 #include <math.h>
@@ -35,6 +41,12 @@ LOG_MODULE_REGISTER(pmw3610, CONFIG_INPUT_LOG_LEVEL);
 K_THREAD_STACK_DEFINE(pmw3610_work_q_stack, PMW3610_WORK_QUEUE_STACK_SIZE);
 static struct k_work_q pmw3610_work_q;
 static bool pmw3610_work_q_started = false;
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+#define PMW3610_SCROLL_LAYERS_SAVE_DELAY_MS 500
+
+static void pmw3610_save_scroll_layers(struct k_work *work);
+#endif
 
 //////// Sensor initialization steps definition //////////
 // init is done in non-blocking manner (i.e., async), a //
@@ -580,11 +592,10 @@ K_TIMER_DEFINE(automouse_layer_timer, deactivate_automouse_layer, NULL);
 
 static enum pixart_input_mode get_input_mode_for_current_layer(const struct device *dev) {
     const struct pixart_config *config = dev->config;
+    struct pixart_data *data = dev->data;
     uint8_t curr_layer = zmk_keymap_highest_layer_active();
-    for (size_t i = 0; i < config->scroll_layers_len; i++) {
-        if (curr_layer == config->scroll_layers[i]) {
-            return SCROLL;
-        }
+    if (curr_layer < 32 && (data->scroll_layers_mask & BIT(curr_layer))) {
+        return SCROLL;
     }
     for (size_t i = 0; i < config->snipe_layers_len; i++) {
         if (curr_layer == config->snipe_layers[i]) {
@@ -1117,6 +1128,19 @@ static int pmw3610_init(const struct device *dev) {
     // init device pointer
     data->dev = dev;
 
+    data->scroll_layers_mask = 0;
+    for (size_t i = 0; i < config->scroll_layers_len; i++) {
+        if (config->scroll_layers[i] >= 0 && config->scroll_layers[i] < 32) {
+            data->scroll_layers_mask |= BIT(config->scroll_layers[i]);
+        } else {
+            LOG_WRN("Ignoring invalid scroll layer %d", config->scroll_layers[i]);
+        }
+    }
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+    k_work_init_delayable(&data->scroll_layers_save_work, pmw3610_save_scroll_layers);
+#endif
+
     // init smart algorithm flag;
     data->sw_smart_flag = false;
 
@@ -1192,3 +1216,122 @@ static int pmw3610_init(const struct device *dev) {
                           CONFIG_SENSOR_INIT_PRIORITY, NULL);
 
 DT_INST_FOREACH_STATUS_OKAY(PMW3610_DEFINE)
+
+struct pmw3610_instance {
+    const struct device *dev;
+    struct pixart_data *data;
+    int instance;
+};
+
+#define PMW3610_INSTANCE(n)                                                                    \
+    static const struct pmw3610_instance pmw3610_instance##n = {                              \
+        .dev = DEVICE_DT_INST_GET(n), .data = &data##n, .instance = n};
+DT_INST_FOREACH_STATUS_OKAY(PMW3610_INSTANCE)
+
+static const struct pmw3610_instance *pmw3610_get_instance(const struct device *dev) {
+    if (dev == NULL) {
+        return NULL;
+    }
+
+#define PMW3610_INSTANCE_MATCH(n)                                                              \
+    if (pmw3610_instance##n.dev == dev) {                                                      \
+        return &pmw3610_instance##n;                                                          \
+    }
+    DT_INST_FOREACH_STATUS_OKAY(PMW3610_INSTANCE_MATCH)
+
+    return NULL;
+}
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+struct pmw3610_persist {
+    uint32_t scroll_layers_mask;
+};
+
+static void pmw3610_save_scroll_layers(struct k_work *work) {
+    struct k_work_delayable *delayable = k_work_delayable_from_work(work);
+    struct pixart_data *data = CONTAINER_OF(delayable, struct pixart_data, scroll_layers_save_work);
+    const struct pmw3610_instance *instance = pmw3610_get_instance(data->dev);
+    struct pmw3610_persist persist = {.scroll_layers_mask = data->scroll_layers_mask};
+    char key[32];
+
+    if (instance == NULL) {
+        LOG_ERR("Cannot save scroll layers for unknown device");
+        return;
+    }
+
+    int len = snprintk(key, sizeof(key), "pmw3610/%d/scroll_layers", instance->instance);
+    if (len < 0 || (size_t)len >= sizeof(key)) {
+        LOG_ERR("Cannot format scroll layers settings key");
+        return;
+    }
+
+    int err = settings_save_one(key, &persist, sizeof(persist));
+    if (err) {
+        LOG_ERR("Cannot save scroll layers settings (%d)", err);
+    } else {
+        LOG_DBG("Saved scroll layers for instance %d", instance->instance);
+    }
+}
+
+static int pmw3610_settings_set(const char *name, size_t len_rd, settings_read_cb read_cb,
+                                void *cb_arg) {
+#define PMW3610_SETTINGS_SET(n)                                                                \
+    {                                                                                          \
+        const struct pmw3610_instance *instance = &pmw3610_instance##n;                      \
+        char key[32];                                                                         \
+        struct pmw3610_persist persist;                                                       \
+        int len = snprintk(key, sizeof(key), "%d/scroll_layers", instance->instance);       \
+        if (len >= 0 && (size_t)len < sizeof(key) && settings_name_steq(name, key, NULL)) {   \
+            if (len_rd != sizeof(persist)) {                                                  \
+                return -EINVAL;                                                               \
+            }                                                                                  \
+            int err = read_cb(cb_arg, &persist, sizeof(persist));                             \
+            if (err < 0) {                                                                    \
+                return err;                                                                   \
+            }                                                                                  \
+            instance->data->scroll_layers_mask = persist.scroll_layers_mask;                 \
+            LOG_DBG("Loaded scroll layers for instance %d", instance->instance);            \
+            return 0;                                                                          \
+        }                                                                                      \
+    }
+    DT_INST_FOREACH_STATUS_OKAY(PMW3610_SETTINGS_SET)
+
+    return -ENOENT;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(pmw3610, "pmw3610", pmw3610_settings_set, NULL, NULL, NULL);
+#endif
+
+int pmw3610_set_scroll_layers(const struct device *dev, uint32_t mask, bool persist) {
+    const struct pmw3610_instance *instance = pmw3610_get_instance(dev);
+    if (instance == NULL) {
+        return -EINVAL;
+    }
+
+    instance->data->scroll_layers_mask = mask;
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+    if (persist) {
+        int err = k_work_reschedule(&instance->data->scroll_layers_save_work,
+                                    K_MSEC(PMW3610_SCROLL_LAYERS_SAVE_DELAY_MS));
+        if (err < 0) {
+            LOG_ERR("Cannot schedule scroll layers settings save (%d)", err);
+            return err;
+        }
+    }
+#else
+    (void)persist;
+#endif
+
+    return 0;
+}
+
+int pmw3610_get_scroll_layers(const struct device *dev, uint32_t *out) {
+    const struct pmw3610_instance *instance = pmw3610_get_instance(dev);
+    if (instance == NULL || out == NULL) {
+        return -EINVAL;
+    }
+
+    *out = instance->data->scroll_layers_mask;
+    return 0;
+}

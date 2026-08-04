@@ -23,8 +23,13 @@ struct pixart_data {
 
     enum pixart_input_mode curr_mode;
     uint32_t curr_cpi;
+    uint32_t scroll_layers_mask;
     int32_t scroll_delta_x;
     int32_t scroll_delta_y;
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+    struct k_work_delayable scroll_layers_save_work;
+#endif
 
 #ifdef CONFIG_PMW3610_POLLING_RATE_125_SW
     int64_t last_poll_time;
