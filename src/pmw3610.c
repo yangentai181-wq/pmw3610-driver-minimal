@@ -34,9 +34,15 @@ LOG_MODULE_REGISTER(pmw3610, CONFIG_INPUT_LOG_LEVEL);
 K_THREAD_STACK_DEFINE(pmw3610_work_q_stack, PMW3610_WORK_QUEUE_STACK_SIZE);
 static struct k_work_q pmw3610_work_q;
 static bool pmw3610_work_q_started = false;
+/* Zephyr mutexes are recursive, so profile updates can safely invoke the
+ * locked SPI helpers below. Runtime APIs must be called from thread context. */
+K_MUTEX_DEFINE(pmw3610_runtime_lock);
+
+#define PMW3610_BOOT_CPI(cpi) ((cpi) - ((cpi) % PMW3610_CPI_STEP))
+
 static struct trackball_profile pmw3610_profile = {
-    .normal_cpi = CONFIG_PMW3610_CPI,
-    .precision_cpi = CONFIG_PMW3610_SNIPE_CPI,
+    .normal_cpi = PMW3610_BOOT_CPI(CONFIG_PMW3610_CPI),
+    .precision_cpi = PMW3610_BOOT_CPI(CONFIG_PMW3610_SNIPE_CPI),
 };
 static bool pmw3610_precision_active;
 static const struct device *pmw3610_profile_device;
@@ -112,9 +118,14 @@ static int reg_read(const struct device *dev, uint8_t reg, uint8_t *buf) {
 
     __ASSERT_NO_MSG((reg & SPI_WRITE_BIT) == 0);
 
-    err = spi_cs_ctrl(dev, true);
+    err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
     if (err) {
         return err;
+    }
+
+    err = spi_cs_ctrl(dev, true);
+    if (err) {
+        goto out;
     }
 
     /* Write register address. */
@@ -124,7 +135,7 @@ static int reg_read(const struct device *dev, uint8_t reg, uint8_t *buf) {
     err = spi_write_dt(&config->bus, &tx);
     if (err) {
         LOG_ERR("Reg read failed on SPI write");
-        return err;
+        goto out;
     }
 
     k_busy_wait(T_SRAD);
@@ -142,17 +153,22 @@ static int reg_read(const struct device *dev, uint8_t reg, uint8_t *buf) {
     err = spi_read_dt(&config->bus, &rx);
     if (err) {
         LOG_ERR("Reg read failed on SPI read");
-        return err;
+        goto out;
     }
 
     err = spi_cs_ctrl(dev, false);
     if (err) {
-        return err;
+        goto out;
     }
 
     k_busy_wait(T_SRX);
 
-    return 0;
+    err = 0;
+
+out:
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
+
+    return err;
 }
 
 // primitive write without enable/disable spi clock on the sensor
@@ -193,25 +209,33 @@ static int _reg_write(const struct device *dev, uint8_t reg, uint8_t val) {
 static int reg_write(const struct device *dev, uint8_t reg, uint8_t val) {
     int err;
 
+    err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
+    if (err) {
+        return err;
+    }
+
     // enable spi clock
     err = _reg_write(dev, PMW3610_REG_SPI_CLK_ON_REQ, PMW3610_SPI_CLOCK_CMD_ENABLE);
     if (unlikely(err != 0)) {
-        return err;
+        goto out;
     }
 
     // write the target register
     err = _reg_write(dev, reg, val);
     if (unlikely(err != 0)) {
-        return err;
+        goto out;
     }
 
     // disable spi clock to save power
     err = _reg_write(dev, PMW3610_REG_SPI_CLK_ON_REQ, PMW3610_SPI_CLOCK_CMD_DISABLE);
     if (unlikely(err != 0)) {
-        return err;
+        goto out;
     }
 
-    return 0;
+out:
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
+
+    return err;
 }
 
 static int motion_burst_read(const struct device *dev, uint8_t *buf, size_t burst_size) {
@@ -221,9 +245,14 @@ static int motion_burst_read(const struct device *dev, uint8_t *buf, size_t burs
 
     __ASSERT_NO_MSG(burst_size <= PMW3610_MAX_BURST_SIZE);
 
-    err = spi_cs_ctrl(dev, true);
+    err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
     if (err) {
         return err;
+    }
+
+    err = spi_cs_ctrl(dev, true);
+    if (err) {
+        goto out;
     }
 
     /* Send motion burst address */
@@ -234,7 +263,7 @@ static int motion_burst_read(const struct device *dev, uint8_t *buf, size_t burs
     err = spi_write_dt(&config->bus, &tx);
     if (err) {
         LOG_ERR("Motion burst failed on SPI write");
-        return err;
+        goto out;
     }
 
     k_busy_wait(T_SRAD_MOTBR);
@@ -248,18 +277,23 @@ static int motion_burst_read(const struct device *dev, uint8_t *buf, size_t burs
     err = spi_read_dt(&config->bus, &rx);
     if (err) {
         LOG_ERR("Motion burst failed on SPI read");
-        return err;
+        goto out;
     }
 
     err = spi_cs_ctrl(dev, false);
     if (err) {
-        return err;
+        goto out;
     }
 
     /* Terminate burst */
     k_busy_wait(T_BEXIT);
 
-    return 0;
+    err = 0;
+
+out:
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
+
+    return err;
 }
 
 /** Writing an array of registers in sequence, used in power-up register initialization and running
@@ -268,10 +302,15 @@ static int burst_write(const struct device *dev, const uint8_t *addr, const uint
                        size_t size) {
     int err;
 
+    err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
+    if (err) {
+        return err;
+    }
+
     // enable spi clock
     err = _reg_write(dev, PMW3610_REG_SPI_CLK_ON_REQ, PMW3610_SPI_CLOCK_CMD_ENABLE);
     if (unlikely(err != 0)) {
-        return err;
+        goto out;
     }
 
     /* Write data */
@@ -280,17 +319,20 @@ static int burst_write(const struct device *dev, const uint8_t *addr, const uint
 
         if (err) {
             LOG_ERR("Burst write failed on SPI write (data)");
-            return err;
+            goto out;
         }
     }
 
     // disable spi clock to save power
     err = _reg_write(dev, PMW3610_REG_SPI_CLK_ON_REQ, PMW3610_SPI_CLOCK_CMD_DISABLE);
     if (unlikely(err != 0)) {
-        return err;
+        goto out;
     }
 
-    return 0;
+out:
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
+
+    return err;
 }
 
 static int check_product_id(const struct device *dev) {
@@ -310,6 +352,13 @@ static int check_product_id(const struct device *dev) {
 }
 
 static int set_cpi(const struct device *dev, uint32_t cpi) {
+    int err;
+
+    err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
+    if (err) {
+        return err;
+    }
+
     /* Set resolution with CPI step of 200 cpi
      * 0x1: 200 cpi (minimum cpi)
      * 0x2: 400 cpi
@@ -320,7 +369,8 @@ static int set_cpi(const struct device *dev, uint32_t cpi) {
     if ((cpi > PMW3610_MAX_CPI) || (cpi < PMW3610_MIN_CPI) ||
         (cpi % PMW3610_CPI_STEP != 0U)) {
         LOG_ERR("CPI value %u out of range", cpi);
-        return -EINVAL;
+        err = -EINVAL;
+        goto out;
     }
 
     // Convert CPI to register value
@@ -330,23 +380,51 @@ static int set_cpi(const struct device *dev, uint32_t cpi) {
     /* set the cpi */
     uint8_t addr[] = {0x7F, PMW3610_REG_RES_STEP, 0x7F};
     uint8_t data[] = {0xFF, value, 0x00};
-    int err = burst_write(dev, addr, data, 3);
+    err = burst_write(dev, addr, data, 3);
     if (err) {
         LOG_ERR("Failed to set CPI");
-        return err;
+        goto out;
     }
 
     struct pixart_data *dev_data = dev->data;
     dev_data->curr_cpi = cpi;
 
-    return 0;
+out:
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
+
+    return err;
 }
 
 static int set_cpi_if_needed(const struct device *dev, uint32_t cpi) {
+    int err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
+    if (err) {
+        return err;
+    }
+
     struct pixart_data *data = dev->data;
     if (cpi != data->curr_cpi) {
-        return set_cpi(dev, cpi);
+        err = set_cpi(dev, cpi);
+    } else {
+        err = 0;
     }
+
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
+
+    return err;
+}
+
+static int pmw3610_profile_snapshot(struct trackball_profile *profile,
+                                    bool *precision_active) {
+    int err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
+    if (err) {
+        return err;
+    }
+
+    *profile = pmw3610_profile;
+    *precision_active = pmw3610_precision_active;
+
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
+
     return 0;
 }
 
@@ -357,6 +435,11 @@ int pmw3610_apply_profile(const struct trackball_profile *profile) {
         return -EINVAL;
     }
 
+    err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
+    if (err) {
+        return err;
+    }
+
     if (pmw3610_profile_device != NULL) {
         struct pixart_data *data = pmw3610_profile_device->data;
 
@@ -365,21 +448,32 @@ int pmw3610_apply_profile(const struct trackball_profile *profile) {
                 pmw3610_profile_device,
                 trackball_profile_cpi(profile, pmw3610_precision_active));
             if (err) {
-                return err;
+                goto out;
             }
         }
     }
 
     pmw3610_profile = *profile;
 
-    return 0;
+    err = 0;
+
+out:
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
+
+    return err;
 }
 
 int pmw3610_set_precision_active(bool active) {
     int err;
 
+    err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
+    if (err) {
+        return err;
+    }
+
     if (active == pmw3610_precision_active) {
-        return 0;
+        err = 0;
+        goto out;
     }
 
     if (pmw3610_profile_device != NULL) {
@@ -389,18 +483,30 @@ int pmw3610_set_precision_active(bool active) {
             err = set_cpi_if_needed(pmw3610_profile_device,
                                     trackball_profile_cpi(&pmw3610_profile, active));
             if (err) {
-                return err;
+                goto out;
             }
         }
     }
 
     pmw3610_precision_active = active;
 
-    return 0;
+    err = 0;
+
+out:
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
+
+    return err;
 }
 
 uint16_t pmw3610_current_cpi(void) {
-    return trackball_profile_cpi(&pmw3610_profile, pmw3610_precision_active);
+    struct trackball_profile profile;
+    bool precision_active;
+
+    if (pmw3610_profile_snapshot(&profile, &precision_active)) {
+        return 0;
+    }
+
+    return trackball_profile_cpi(&profile, precision_active);
 }
 
 /* Set sampling rate in each mode (in ms) */
@@ -538,6 +644,8 @@ static int pmw3610_async_init_configure(const struct device *dev) {
     LOG_INF("async_init_configure");
 
     int err = 0;
+    struct trackball_profile profile;
+    bool precision_active;
 
     // clear motion registers first (required in datasheet)
     for (uint8_t reg = 0x02; (reg <= 0x05) && !err; reg++) {
@@ -547,11 +655,22 @@ static int pmw3610_async_init_configure(const struct device *dev) {
 
     // CPI from the runtime profile's boot defaults
     if (!err) {
-        err = trackball_profile_validate(pmw3610_profile.normal_cpi,
-                                         pmw3610_profile.precision_cpi);
+        if (CONFIG_PMW3610_CPI % PMW3610_CPI_STEP != 0U) {
+            LOG_WRN("Normal boot CPI %u rounded down to %u", (uint32_t)CONFIG_PMW3610_CPI,
+                    (uint32_t)PMW3610_BOOT_CPI(CONFIG_PMW3610_CPI));
+        }
+        if (CONFIG_PMW3610_SNIPE_CPI % PMW3610_CPI_STEP != 0U) {
+            LOG_WRN("Precision boot CPI %u rounded down to %u",
+                    (uint32_t)CONFIG_PMW3610_SNIPE_CPI,
+                    (uint32_t)PMW3610_BOOT_CPI(CONFIG_PMW3610_SNIPE_CPI));
+        }
+        err = pmw3610_profile_snapshot(&profile, &precision_active);
     }
     if (!err) {
-        err = set_cpi(dev, pmw3610_current_cpi());
+        err = trackball_profile_validate(profile.normal_cpi, profile.precision_cpi);
+    }
+    if (!err) {
+        err = set_cpi(dev, trackball_profile_cpi(&profile, precision_active));
     }
 
     // set performace register: run mode, vel_rate, poshi_rate, poslo_rate
@@ -1190,7 +1309,12 @@ static int pmw3610_init(const struct device *dev) {
 
     // init device pointer
     data->dev = dev;
+    err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
+    if (err) {
+        return err;
+    }
     pmw3610_profile_device = dev;
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
 
     // init smart algorithm flag;
     data->sw_smart_flag = false;
