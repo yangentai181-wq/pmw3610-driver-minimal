@@ -644,55 +644,55 @@ int main(void) {
 
 ZTEST_SUITE(studio_trackball_settings, NULL, NULL, NULL, NULL, NULL);
 
-ZTEST(studio_trackball_settings, locked_request_fixtures_encode_and_decode) {
+ZTEST(studio_trackball_settings, test_locked_request_fixtures_encode_and_decode) {
     zassert_equal(0, test_locked_request_fixtures_encode_and_decode());
 }
 
-ZTEST(studio_trackball_settings, get_reads_authoritative_config_without_writes) {
+ZTEST(studio_trackball_settings, test_get_reads_authoritative_config_without_writes) {
     zassert_equal(0, test_get_reads_authoritative_config_without_writes());
 }
 
-ZTEST(studio_trackball_settings, validate_checks_without_writing) {
+ZTEST(studio_trackball_settings, test_validate_checks_without_writing) {
     zassert_equal(0, test_validate_checks_without_writing());
 }
 
-ZTEST(studio_trackball_settings, apply_returns_persisted_readback_and_notifies) {
+ZTEST(studio_trackball_settings, test_apply_returns_persisted_readback_and_notifies) {
     zassert_equal(0, test_apply_returns_persisted_readback_and_notifies());
 }
 
-ZTEST(studio_trackball_settings, apply_maps_sensor_failure_stage_independent_of_errno) {
+ZTEST(studio_trackball_settings, test_apply_maps_sensor_failure_stage_independent_of_errno) {
     zassert_equal(0, test_apply_maps_sensor_failure_stage_independent_of_errno());
 }
 
-ZTEST(studio_trackball_settings, apply_maps_keymap_failure_stage_independent_of_errno) {
+ZTEST(studio_trackball_settings, test_apply_maps_keymap_failure_stage_independent_of_errno) {
     zassert_equal(0, test_apply_maps_keymap_failure_stage_independent_of_errno());
 }
 
-ZTEST(studio_trackball_settings, apply_maps_settings_failure_stage_independent_of_errno) {
+ZTEST(studio_trackball_settings, test_apply_maps_settings_failure_stage_independent_of_errno) {
     zassert_equal(0, test_apply_maps_settings_failure_stage_independent_of_errno());
 }
 
-ZTEST(studio_trackball_settings, get_observes_precision_transition_outside_the_handler) {
+ZTEST(studio_trackball_settings, test_get_observes_precision_transition_outside_the_handler) {
     zassert_equal(0, test_get_observes_precision_transition_outside_the_handler());
 }
 
-ZTEST(studio_trackball_settings, stale_revision_returns_readback_without_writes) {
+ZTEST(studio_trackball_settings, test_stale_revision_returns_readback_without_writes) {
     zassert_equal(0, test_stale_revision_returns_readback_without_writes());
 }
 
-ZTEST(studio_trackball_settings, invalid_cpi_returns_error_without_writes) {
+ZTEST(studio_trackball_settings, test_invalid_cpi_returns_error_without_writes) {
     zassert_equal(0, test_invalid_cpi_returns_error_without_writes());
 }
 
-ZTEST(studio_trackball_settings, unsupported_binding_returns_error_without_writes) {
+ZTEST(studio_trackball_settings, test_unsupported_binding_returns_error_without_writes) {
     zassert_equal(0, test_unsupported_binding_returns_error_without_writes());
 }
 
-ZTEST(studio_trackball_settings, unsupported_position_returns_error_without_writes) {
+ZTEST(studio_trackball_settings, test_unsupported_position_returns_error_without_writes) {
     zassert_equal(0, test_unsupported_position_returns_error_without_writes());
 }
 
-ZTEST(studio_trackball_settings, precision_layer_changes_apply_immediately_and_notify) {
+ZTEST(studio_trackball_settings, test_precision_layer_changes_apply_immediately_and_notify) {
     zassert_equal(0, test_precision_layer_changes_apply_immediately_and_notify());
 }
 
