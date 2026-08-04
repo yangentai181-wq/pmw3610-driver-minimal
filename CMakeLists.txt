@@ -33,9 +33,17 @@ if(CONFIG_PMW3610_STUDIO_RPC)
   set(NANOPB_GENERATE_CPP_STANDALONE OFF)
   set(NANOPB_GENERATE_CPP_APPEND_PATH TRUE)
 
-  zephyr_nanopb_sources(app proto/zmk/trackball_settings/trackball_settings.proto)
-  zephyr_library_include_directories(${CMAKE_CURRENT_BINARY_DIR})
-  zephyr_library_sources_ifdef(CONFIG_PMW3610_STUDIO_RPC src/studio/trackball_settings_handler.c)
+  nanopb_generate_cpp(trackball_settings_proto_srcs trackball_settings_proto_hdrs
+    RELPATH ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/proto/zmk/trackball_settings/trackball_settings.proto)
+  target_include_directories(${ZEPHYR_CURRENT_LIBRARY} PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+  target_sources(${ZEPHYR_CURRENT_LIBRARY} PRIVATE
+    ${trackball_settings_proto_srcs} ${trackball_settings_proto_hdrs})
+
+  # The handler and generated source both include <proto/zmk/...> from this root.
+  target_include_directories(app PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
+  add_dependencies(app ${ZEPHYR_CURRENT_LIBRARY})
+  target_sources(app PRIVATE src/studio/trackball_settings_handler.c)
 endif()
 
 zephyr_library_sources_ifdef(CONFIG_PMW3610 src/pmw3610.c)
