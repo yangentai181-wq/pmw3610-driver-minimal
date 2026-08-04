@@ -1,7 +1,9 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
 
 #if defined(TRACKBALL_SETTINGS_HOST_TEST) || defined(TRACKBALL_SETTINGS_TEST_ADAPTER)
 struct zmk_behavior_binding {
@@ -54,7 +56,11 @@ struct trackball_settings_adapter {
     int (*save_keymap)(void);
     int (*save_settings)(const struct trackball_settings_record *record);
     int (*apply_profile)(const struct trackball_profile *profile);
+    /* Required by reload to compensate a failed profile update. */
+    int (*get_profile)(struct trackball_profile *profile);
 };
+
+typedef ssize_t (*trackball_settings_record_read_cb)(void *cb_arg, void *data, size_t len);
 
 /* Pure transaction operations for the Studio RPC handler and unit tests. */
 int trackball_settings_validate(const struct trackball_settings_record *current,
@@ -65,6 +71,8 @@ int trackball_settings_apply(struct trackball_settings_record *current,
                              const struct trackball_settings_adapter *adapter);
 int trackball_settings_reload(const struct trackball_settings_record *record,
                               const struct trackball_settings_adapter *adapter);
+int trackball_settings_read_record_exact(struct trackball_settings_record *record,
+                                         trackball_settings_record_read_cb read_cb, void *cb_arg);
 
 /* Firmware-owned state and persistence entry points. */
 int trackball_settings_get_record(struct trackball_settings_record *record);

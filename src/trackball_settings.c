@@ -36,6 +36,22 @@ struct trackball_settings_binding_snapshot {
     struct zmk_behavior_binding binding;
 };
 
+int trackball_settings_read_record_exact(struct trackball_settings_record *record,
+                                         trackball_settings_record_read_cb read_cb, void *cb_arg) {
+    struct trackball_settings_record candidate;
+    ssize_t bytes_read;
+
+    if (record == NULL || read_cb == NULL) {
+        return -EINVAL;
+    }
+    bytes_read = read_cb(cb_arg, &candidate, sizeof(candidate));
+    if (bytes_read != (ssize_t)sizeof(candidate)) {
+        return bytes_read < 0 ? (int)bytes_read : -EIO;
+    }
+    *record = candidate;
+    return 0;
+}
+
 static const char *trackball_settings_behavior_name(enum trackball_settings_binding_kind kind) {
 #if defined(TRACKBALL_SETTINGS_HOST_TEST) || defined(TRACKBALL_SETTINGS_TEST_ADAPTER)
     switch (kind) {
@@ -183,7 +199,8 @@ static int trackball_settings_inspect_binding(const struct zmk_behavior_binding 
     if (kind == TRACKBALL_SETTINGS_BINDING_UNSUPPORTED || kind == TRACKBALL_SETTINGS_BINDING_TRANS) {
         return -ENOTSUP;
     }
-    if (kind != TRACKBALL_SETTINGS_BINDING_KP &&
+    if ((kind == TRACKBALL_SETTINGS_BINDING_LT ||
+         kind == TRACKBALL_SETTINGS_BINDING_LT_MKP) &&
         binding->param1 == TRACKBALL_SETTINGS_PRECISION_LAYER) {
         return -ENOTSUP;
     }
@@ -212,7 +229,8 @@ static int trackball_settings_binding_from_record(const struct trackball_setting
     if (kind == TRACKBALL_SETTINGS_BINDING_UNSUPPORTED || kind == TRACKBALL_SETTINGS_BINDING_TRANS) {
         return -ENOTSUP;
     }
-    if (kind != TRACKBALL_SETTINGS_BINDING_KP &&
+    if ((kind == TRACKBALL_SETTINGS_BINDING_LT ||
+         kind == TRACKBALL_SETTINGS_BINDING_LT_MKP) &&
         record->original_param1 == TRACKBALL_SETTINGS_PRECISION_LAYER) {
         return -ENOTSUP;
     }
@@ -391,6 +409,17 @@ static void trackball_settings_rollback(
     (void)adapter->save_settings(previous);
 }
 
+static void trackball_settings_reload_rollback(
+    const struct trackball_settings_adapter *adapter,
+    const struct trackball_settings_binding_snapshot *snapshot,
+    const struct trackball_profile *previous_profile) {
+    if (snapshot != NULL) {
+        (void)adapter->set_binding(TRACKBALL_SETTINGS_BASE_LAYER, snapshot->position,
+                                   snapshot->binding);
+    }
+    (void)adapter->apply_profile(previous_profile);
+}
+
 static int trackball_settings_verify_readback(
     const struct trackball_settings_adapter *adapter, const struct trackball_settings_record *previous,
     const struct trackball_settings_request *request,
@@ -539,9 +568,10 @@ int trackball_settings_reload(const struct trackball_settings_record *record,
     struct zmk_behavior_binding wrapper;
     struct trackball_settings_binding_snapshot snapshot;
     struct trackball_profile profile;
+    struct trackball_profile previous_profile;
     int err;
 
-    if (!trackball_settings_adapter_valid(adapter)) {
+    if (!trackball_settings_adapter_valid(adapter) || adapter->get_profile == NULL) {
         return -EINVAL;
     }
     err = trackball_settings_record_validate(record);
@@ -552,8 +582,16 @@ int trackball_settings_reload(const struct trackball_settings_record *record,
         .normal_cpi = record->normal_cpi,
         .precision_cpi = record->precision_cpi,
     };
+    err = adapter->get_profile(&previous_profile);
+    if (err != 0) {
+        return err;
+    }
     if (!record->enabled) {
-        return adapter->apply_profile(&profile);
+        err = adapter->apply_profile(&profile);
+        if (err != 0) {
+            trackball_settings_reload_rollback(adapter, NULL, &previous_profile);
+        }
+        return err;
     }
     err = trackball_settings_binding_from_record(record, &original);
     if (err != 0) {
@@ -569,17 +607,23 @@ int trackball_settings_reload(const struct trackball_settings_record *record,
     }
     err = adapter->set_binding(TRACKBALL_SETTINGS_BASE_LAYER, record->selected_position, wrapper);
     if (err != 0) {
-        return err;
+        goto rollback;
     }
     err = adapter->apply_profile(&profile);
-    if (err == 0 && trackball_settings_bindings_match(
-                        adapter->get_binding(TRACKBALL_SETTINGS_BASE_LAYER, record->selected_position),
-                        &wrapper)) {
-        return 0;
+    if (err != 0) {
+        goto rollback;
+    }
+    if (!trackball_settings_bindings_match(
+            adapter->get_binding(TRACKBALL_SETTINGS_BASE_LAYER, record->selected_position), &wrapper)) {
+        err = -EIO;
+        goto rollback;
     }
 
-    (void)adapter->set_binding(TRACKBALL_SETTINGS_BASE_LAYER, snapshot.position, snapshot.binding);
-    return err != 0 ? err : -EIO;
+    return 0;
+
+rollback:
+    trackball_settings_reload_rollback(adapter, &snapshot, &previous_profile);
+    return err;
 }
 
 #if !defined(TRACKBALL_SETTINGS_HOST_TEST) && !defined(TRACKBALL_SETTINGS_TEST_ADAPTER)
@@ -611,6 +655,18 @@ static int trackball_settings_save_keymap(void) {
     return zmk_keymap_save_changes();
 }
 
+static int trackball_settings_get_current_profile(struct trackball_profile *profile) {
+    if (profile == NULL) {
+        return -EINVAL;
+    }
+
+    *profile = (struct trackball_profile){
+        .normal_cpi = trackball_settings_current.normal_cpi,
+        .precision_cpi = trackball_settings_current.precision_cpi,
+    };
+    return 0;
+}
+
 struct trackball_settings_storage_readback {
     struct trackball_settings_record record;
     int error;
@@ -621,7 +677,7 @@ static int trackball_settings_readback_set(const char *name, size_t len, setting
                                            void *cb_arg, void *param) {
     const char *next;
     struct trackball_settings_storage_readback *readback = param;
-    ssize_t bytes_read;
+    int err;
 
     if (!settings_name_steq(name, "settings", &next) || next != NULL) {
         return 0;
@@ -631,9 +687,9 @@ static int trackball_settings_readback_set(const char *name, size_t len, setting
         readback->error = -EINVAL;
         return 1;
     }
-    bytes_read = read_cb(cb_arg, &readback->record, sizeof(readback->record));
-    if (bytes_read != (ssize_t)sizeof(readback->record)) {
-        readback->error = bytes_read < 0 ? (int)bytes_read : -EIO;
+    err = trackball_settings_read_record_exact(&readback->record, read_cb, cb_arg);
+    if (err != 0) {
+        readback->error = err;
     }
     return 1;
 }
@@ -677,6 +733,7 @@ static const struct trackball_settings_adapter trackball_settings_zephyr_adapter
     .save_keymap = trackball_settings_save_keymap,
     .save_settings = trackball_settings_save_record,
     .apply_profile = pmw3610_apply_profile,
+    .get_profile = trackball_settings_get_current_profile,
 };
 
 int trackball_settings_get_record(struct trackball_settings_record *record) {
@@ -738,8 +795,8 @@ static int trackball_settings_settings_set(const char *name, size_t len, setting
     if (len != sizeof(record)) {
         return -EINVAL;
     }
-    err = read_cb(cb_arg, &record, sizeof(record));
-    if (err < 0) {
+    err = trackball_settings_read_record_exact(&record, read_cb, cb_arg);
+    if (err != 0) {
         return err;
     }
     err = k_mutex_lock(&trackball_settings_lock, K_FOREVER);

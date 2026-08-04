@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/types.h>
 
 #ifdef TRACKBALL_SETTINGS_HOST_TEST
 #include <stdio.h>
@@ -35,9 +36,12 @@ struct fake_state {
     int save_settings_calls;
     int apply_profile_calls;
     int fail_set_call;
+    int fail_set_after_write_call;
+    int ignore_set_call;
     int fail_save_keymap_call;
     int fail_save_settings_call;
     int fail_apply_profile_call;
+    int fail_apply_profile_after_write_call;
     int set_error;
     int save_keymap_error;
     int save_settings_error;
@@ -46,6 +50,11 @@ struct fake_state {
     int operation_count;
     uint8_t set_positions[16];
     int set_position_count;
+};
+
+struct fake_record_reader {
+    struct trackball_settings_record record;
+    ssize_t bytes_read;
 };
 
 static struct fake_state fake;
@@ -102,9 +111,15 @@ static int fake_set_binding(uint8_t layer, uint8_t position, struct zmk_behavior
     if (layer != TRACKBALL_SETTINGS_BASE_LAYER || position >= TEST_POSITION_COUNT) {
         return -EINVAL;
     }
+    if (fake.ignore_set_call == fake.set_calls) {
+        return 0;
+    }
 
     fake.bindings[position] = value;
     fake.binding_present[position] = true;
+    if (fake.fail_set_after_write_call == fake.set_calls) {
+        return fake.set_error;
+    }
     return 0;
 }
 
@@ -137,6 +152,18 @@ static int fake_apply_profile(const struct trackball_profile *profile) {
     }
 
     fake.profile = *profile;
+    if (fake.fail_apply_profile_after_write_call == fake.apply_profile_calls) {
+        return fake.apply_profile_error;
+    }
+    return 0;
+}
+
+static int fake_get_profile(struct trackball_profile *profile) {
+    if (profile == NULL) {
+        return -EINVAL;
+    }
+
+    *profile = fake.profile;
     return 0;
 }
 
@@ -146,6 +173,7 @@ static const struct trackball_settings_adapter adapter = {
     .save_keymap = fake_save_keymap,
     .save_settings = fake_save_settings,
     .apply_profile = fake_apply_profile,
+    .get_profile = fake_get_profile,
 };
 
 static struct trackball_settings_record disabled_record(uint32_t revision) {
@@ -188,6 +216,20 @@ static void fake_reset(const struct trackball_settings_record *current) {
 static void fake_put_binding(uint8_t position, struct zmk_behavior_binding value) {
     fake.bindings[position] = value;
     fake.binding_present[position] = true;
+}
+
+static ssize_t fake_read_record(void *cb_arg, void *data, size_t len) {
+    struct fake_record_reader *reader = cb_arg;
+    size_t bytes_to_copy = 0;
+
+    if (reader->bytes_read > 0) {
+        bytes_to_copy = (size_t)reader->bytes_read;
+        if (bytes_to_copy > len) {
+            bytes_to_copy = len;
+        }
+        memcpy(data, &reader->record, bytes_to_copy);
+    }
+    return reader->bytes_read;
 }
 
 #ifdef TRACKBALL_SETTINGS_HOST_TEST
@@ -296,6 +338,38 @@ static int test_enables_mt_and_preserves_tap_param2(void) {
           "a mod-tap must retain its complete tap parameter");
     CHECK_INT((int)MOD_LSFT, (int)current.original_param1);
     CHECK_INT((int)KEY_C, (int)current.original_param2);
+    return 0;
+}
+
+static int test_mt_param1_equal_to_precision_layer_enables_reloads_and_disables(void) {
+    struct trackball_settings_record current = disabled_record(3);
+    struct trackball_settings_request enable = request(800, 200, true, 2, 3);
+    struct trackball_settings_request disable;
+    struct trackball_settings_record saved;
+    struct zmk_behavior_binding original =
+        binding("mt", TRACKBALL_SETTINGS_PRECISION_LAYER, KEY_C);
+    struct zmk_behavior_binding wrapper =
+        binding("lt", TRACKBALL_SETTINGS_PRECISION_LAYER, KEY_C);
+
+    fake_reset(&current);
+    fake_put_binding(2, original);
+    CHECK_INT(0, trackball_settings_apply(&current, &enable, &adapter));
+    CHECK(binding_equal(fake_get_binding(0, 2), &wrapper),
+          "a mod-tap whose modifier mask is 8 must be wrapped");
+    CHECK_INT((int)TRACKBALL_SETTINGS_PRECISION_LAYER, (int)current.original_param1);
+
+    saved = current;
+    fake_reset(&saved);
+    fake_put_binding(2, original);
+    CHECK_INT(0, trackball_settings_reload(&saved, &adapter));
+    CHECK(binding_equal(fake_get_binding(0, 2), &wrapper),
+          "reload must reconstruct a mod-tap whose modifier mask is 8");
+
+    current = saved;
+    disable = request(800, 200, false, 0, current.revision);
+    CHECK_INT(0, trackball_settings_apply(&current, &disable, &adapter));
+    CHECK(binding_equal(fake_get_binding(0, 2), &original),
+          "disable must restore a mod-tap whose modifier mask is 8");
     return 0;
 }
 
@@ -587,6 +661,109 @@ static int test_reload_validates_schema_and_reapplies_wrapper_and_profile(void) 
     return 0;
 }
 
+static void prepare_reload_failure(struct trackball_settings_record *record,
+                                   struct trackball_profile *previous_profile,
+                                   struct zmk_behavior_binding *original) {
+    *record = (struct trackball_settings_record){
+        .schema_version = TRACKBALL_SETTINGS_SCHEMA_VERSION,
+        .enabled = true,
+        .selected_position = 6,
+        .normal_cpi = 1200,
+        .precision_cpi = 400,
+        .original_behavior_id = TRACKBALL_SETTINGS_TEST_BEHAVIOR_ID_KP,
+        .original_param1 = KEY_C,
+        .original_param2 = 0,
+        .revision = 1,
+    };
+    *previous_profile = (struct trackball_profile){.normal_cpi = 800, .precision_cpi = 200};
+    *original = binding("kp", KEY_C, 0);
+    fake_reset(record);
+    fake.profile = *previous_profile;
+    fake_put_binding(record->selected_position, *original);
+}
+
+static int check_reload_rollback(const struct trackball_settings_record *record,
+                                 const struct trackball_profile *previous_profile,
+                                 const struct zmk_behavior_binding *original) {
+    CHECK(binding_equal(fake_get_binding(TRACKBALL_SETTINGS_BASE_LAYER, record->selected_position),
+                        original),
+          "reload failure must restore the original binding");
+    CHECK_INT((int)previous_profile->normal_cpi, fake.profile.normal_cpi);
+    CHECK_INT((int)previous_profile->precision_cpi, fake.profile.precision_cpi);
+    CHECK_INT(0, fake.save_keymap_calls);
+    CHECK_INT(0, fake.save_settings_calls);
+    return 0;
+}
+
+static int test_reload_restores_snapshot_after_set_failure(void) {
+    struct trackball_settings_record record;
+    struct trackball_profile previous_profile;
+    struct zmk_behavior_binding original;
+
+    prepare_reload_failure(&record, &previous_profile, &original);
+    fake.fail_set_after_write_call = 1;
+    fake.set_error = -EACCES;
+
+    CHECK_INT(-EACCES, trackball_settings_reload(&record, &adapter));
+    return check_reload_rollback(&record, &previous_profile, &original);
+}
+
+static int test_reload_restores_profile_after_apply_profile_failure(void) {
+    struct trackball_settings_record record;
+    struct trackball_profile previous_profile;
+    struct zmk_behavior_binding original;
+
+    prepare_reload_failure(&record, &previous_profile, &original);
+    fake.fail_apply_profile_after_write_call = 1;
+    fake.apply_profile_error = -EAGAIN;
+
+    CHECK_INT(-EAGAIN, trackball_settings_reload(&record, &adapter));
+    return check_reload_rollback(&record, &previous_profile, &original);
+}
+
+static int test_reload_restores_profile_after_binding_readback_failure(void) {
+    struct trackball_settings_record record;
+    struct trackball_profile previous_profile;
+    struct zmk_behavior_binding original;
+
+    prepare_reload_failure(&record, &previous_profile, &original);
+    fake.ignore_set_call = 1;
+
+    CHECK_INT(-EIO, trackball_settings_reload(&record, &adapter));
+    return check_reload_rollback(&record, &previous_profile, &original);
+}
+
+static int test_rejects_zero_and_short_storage_reads_without_writes(void) {
+    struct trackball_settings_record before = disabled_record(9);
+    struct trackball_settings_record loaded = before;
+    struct fake_record_reader reader = {
+        .record = {
+            .schema_version = TRACKBALL_SETTINGS_SCHEMA_VERSION,
+            .enabled = true,
+            .selected_position = 2,
+            .normal_cpi = 1200,
+            .precision_cpi = 400,
+            .original_behavior_id = TRACKBALL_SETTINGS_TEST_BEHAVIOR_ID_KP,
+            .original_param1 = KEY_C,
+            .original_param2 = 0,
+            .revision = 10,
+        },
+        .bytes_read = 0,
+    };
+
+    fake_reset(&before);
+    CHECK_INT(-EIO, trackball_settings_read_record_exact(&loaded, fake_read_record, &reader));
+    CHECK(record_equal(&loaded, &before), "a zero-byte read must not alter the saved record");
+    CHECK_INT(0, check_no_writes());
+
+    loaded = before;
+    reader.bytes_read = (ssize_t)sizeof(reader.record) - 1;
+    CHECK_INT(-EIO, trackball_settings_read_record_exact(&loaded, fake_read_record, &reader));
+    CHECK(record_equal(&loaded, &before), "a short read must not alter the saved record");
+    CHECK_INT(0, check_no_writes());
+    return 0;
+}
+
 static int test_success_increments_revision_exactly_once(void) {
     struct trackball_settings_record current = disabled_record(41);
     struct trackball_settings_request enable = request(800, 200, true, 0, 41);
@@ -608,6 +785,7 @@ int main(void) {
     return test_enables_kp_and_stores_exact_original_binding() ||
            test_enables_lt_and_preserves_tap_param2() ||
            test_enables_mt_and_preserves_tap_param2() ||
+           test_mt_param1_equal_to_precision_layer_enables_reloads_and_disables() ||
            test_enables_lt_mkp_and_preserves_mouse_tap() ||
            test_changing_positions_restores_previous_binding_before_wrapping_new_one() ||
            test_disabling_restores_original_binding_and_normal_profile() ||
@@ -620,6 +798,10 @@ int main(void) {
            test_rolls_back_after_keymap_save_failure_and_returns_that_error() ||
            test_rolls_back_after_settings_save_failure_and_returns_that_error() ||
            test_reload_validates_schema_and_reapplies_wrapper_and_profile() ||
+           test_reload_restores_snapshot_after_set_failure() ||
+           test_reload_restores_profile_after_apply_profile_failure() ||
+           test_reload_restores_profile_after_binding_readback_failure() ||
+           test_rejects_zero_and_short_storage_reads_without_writes() ||
            test_success_increments_revision_exactly_once();
 }
 
@@ -635,6 +817,11 @@ ZTEST(trackball_settings, test_enables_lt_and_preserves_tap_param2) {
 
 ZTEST(trackball_settings, test_enables_mt_and_preserves_tap_param2) {
     zassert_equal(test_enables_mt_and_preserves_tap_param2(), 0, "test failed");
+}
+
+ZTEST(trackball_settings, test_mt_param1_equal_to_precision_layer_enables_reloads_and_disables) {
+    zassert_equal(test_mt_param1_equal_to_precision_layer_enables_reloads_and_disables(), 0,
+                  "test failed");
 }
 
 ZTEST(trackball_settings, test_enables_lt_mkp_and_preserves_mouse_tap) {
@@ -685,6 +872,22 @@ ZTEST(trackball_settings, test_rolls_back_after_settings_save_failure_and_return
 
 ZTEST(trackball_settings, test_reload_validates_schema_and_reapplies_wrapper_and_profile) {
     zassert_equal(test_reload_validates_schema_and_reapplies_wrapper_and_profile(), 0, "test failed");
+}
+
+ZTEST(trackball_settings, test_reload_restores_snapshot_after_set_failure) {
+    zassert_equal(test_reload_restores_snapshot_after_set_failure(), 0, "test failed");
+}
+
+ZTEST(trackball_settings, test_reload_restores_profile_after_apply_profile_failure) {
+    zassert_equal(test_reload_restores_profile_after_apply_profile_failure(), 0, "test failed");
+}
+
+ZTEST(trackball_settings, test_reload_restores_profile_after_binding_readback_failure) {
+    zassert_equal(test_reload_restores_profile_after_binding_readback_failure(), 0, "test failed");
+}
+
+ZTEST(trackball_settings, test_rejects_zero_and_short_storage_reads_without_writes) {
+    zassert_equal(test_rejects_zero_and_short_storage_reads_without_writes(), 0, "test failed");
 }
 
 ZTEST(trackball_settings, test_success_increments_revision_exactly_once) {
