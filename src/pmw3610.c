@@ -1299,7 +1299,7 @@ static int pmw3610_settings_set(const char *name, size_t len_rd, settings_read_c
     return -ENOENT;
 }
 
-SETTINGS_STATIC_HANDLER_DEFINE(pmw3610, "pmw3610", pmw3610_settings_set, NULL, NULL, NULL);
+SETTINGS_STATIC_HANDLER_DEFINE(pmw3610, "pmw3610", NULL, pmw3610_settings_set, NULL, NULL);
 #endif
 
 int pmw3610_set_scroll_layers(const struct device *dev, uint32_t mask, bool persist) {
