@@ -1,6 +1,7 @@
 #pragma once
 
 #include <zephyr/drivers/sensor.h>
+#include <pmw3610/trackball_profile.h>
 #include "pixart.h"
 
 #ifdef __cplusplus
@@ -93,8 +94,9 @@ extern "C" {
 #define PMW3610_SHUTTER_L_POS 6
 
 /* cpi/resolution range */
-#define PMW3610_MAX_CPI 3200
-#define PMW3610_MIN_CPI 200
+#define PMW3610_MAX_CPI TRACKBALL_PROFILE_MAX_CPI
+#define PMW3610_MIN_CPI TRACKBALL_PROFILE_MIN_CPI
+#define PMW3610_CPI_STEP TRACKBALL_PROFILE_CPI_STEP
 
 /* write command bit position */
 #define SPI_WRITE_BIT BIT(7)

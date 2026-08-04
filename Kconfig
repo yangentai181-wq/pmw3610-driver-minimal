@@ -22,11 +22,12 @@ config PMW3610_SMART_ALGORITHM
     such as graniles and tiles.
 
 config PMW3610_CPI
-    int "PMW3610's default CPI"
+    int "PMW3610 normal CPI boot default"
     default 800
     range 200 3200
     help
-      Default CPI value, with 200 step
+      Initial normal CPI for the runtime trackball profile. The profile can
+      be updated at runtime; values must use a 200 CPI step.
 
 config PMW3610_CPI_DIVIDOR
     int "PMW3610's default CPI dividor"
@@ -36,11 +37,12 @@ config PMW3610_CPI_DIVIDOR
       Default CPI dividor value.
 
 config PMW3610_SNIPE_CPI
-    int "PMW3610's CPI in snipe mode"
+    int "PMW3610 precision CPI boot default"
     default 200
     range 200 3200
     help
-      Snipe CPI value, with 200 step
+      Initial precision CPI for the runtime trackball profile. The profile
+      can be updated at runtime; values must use a 200 CPI step.
 
 config PMW3610_SNIPE_CPI_DIVIDOR
     int "PMW3610's CPI dividor in snipe mode"

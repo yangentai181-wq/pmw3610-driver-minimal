@@ -1,0 +1,6 @@
+tests:
+  trackball_profile.unit:
+    platform_allow:
+      - native_posix_64
+    tags:
+      - trackball_profile

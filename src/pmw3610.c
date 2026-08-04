@@ -34,6 +34,12 @@ LOG_MODULE_REGISTER(pmw3610, CONFIG_INPUT_LOG_LEVEL);
 K_THREAD_STACK_DEFINE(pmw3610_work_q_stack, PMW3610_WORK_QUEUE_STACK_SIZE);
 static struct k_work_q pmw3610_work_q;
 static bool pmw3610_work_q_started = false;
+static struct trackball_profile pmw3610_profile = {
+    .normal_cpi = CONFIG_PMW3610_CPI,
+    .precision_cpi = CONFIG_PMW3610_SNIPE_CPI,
+};
+static bool pmw3610_precision_active;
+static const struct device *pmw3610_profile_device;
 
 //////// Sensor initialization steps definition //////////
 // init is done in non-blocking manner (i.e., async), a //
@@ -311,7 +317,8 @@ static int set_cpi(const struct device *dev, uint32_t cpi) {
      * :
      */
 
-    if ((cpi > PMW3610_MAX_CPI) || (cpi < PMW3610_MIN_CPI)) {
+    if ((cpi > PMW3610_MAX_CPI) || (cpi < PMW3610_MIN_CPI) ||
+        (cpi % PMW3610_CPI_STEP != 0U)) {
         LOG_ERR("CPI value %u out of range", cpi);
         return -EINVAL;
     }
@@ -341,6 +348,59 @@ static int set_cpi_if_needed(const struct device *dev, uint32_t cpi) {
         return set_cpi(dev, cpi);
     }
     return 0;
+}
+
+int pmw3610_apply_profile(const struct trackball_profile *profile) {
+    int err;
+
+    if (profile == NULL || trackball_profile_validate(profile->normal_cpi, profile->precision_cpi)) {
+        return -EINVAL;
+    }
+
+    if (pmw3610_profile_device != NULL) {
+        struct pixart_data *data = pmw3610_profile_device->data;
+
+        if (data->ready) {
+            err = set_cpi_if_needed(
+                pmw3610_profile_device,
+                trackball_profile_cpi(profile, pmw3610_precision_active));
+            if (err) {
+                return err;
+            }
+        }
+    }
+
+    pmw3610_profile = *profile;
+
+    return 0;
+}
+
+int pmw3610_set_precision_active(bool active) {
+    int err;
+
+    if (active == pmw3610_precision_active) {
+        return 0;
+    }
+
+    if (pmw3610_profile_device != NULL) {
+        struct pixart_data *data = pmw3610_profile_device->data;
+
+        if (data->ready) {
+            err = set_cpi_if_needed(pmw3610_profile_device,
+                                    trackball_profile_cpi(&pmw3610_profile, active));
+            if (err) {
+                return err;
+            }
+        }
+    }
+
+    pmw3610_precision_active = active;
+
+    return 0;
+}
+
+uint16_t pmw3610_current_cpi(void) {
+    return trackball_profile_cpi(&pmw3610_profile, pmw3610_precision_active);
 }
 
 /* Set sampling rate in each mode (in ms) */
@@ -485,9 +545,13 @@ static int pmw3610_async_init_configure(const struct device *dev) {
         err = reg_read(dev, reg, buf);
     }
 
-    // cpi
+    // CPI from the runtime profile's boot defaults
     if (!err) {
-        err = set_cpi(dev, CONFIG_PMW3610_CPI);
+        err = trackball_profile_validate(pmw3610_profile.normal_cpi,
+                                         pmw3610_profile.precision_cpi);
+    }
+    if (!err) {
+        err = set_cpi(dev, pmw3610_current_cpi());
     }
 
     // set performace register: run mode, vel_rate, poshi_rate, poslo_rate
@@ -630,13 +694,25 @@ static int pmw3610_report_data(const struct device *dev) {
     int32_t dividor;
     enum pixart_input_mode input_mode = get_input_mode_for_current_layer(dev);
     bool input_mode_changed = data->curr_mode != input_mode;
+    int err = pmw3610_set_precision_active(input_mode == SNIPE);
+    if (err) {
+        return err;
+    }
+
+    uint16_t cpi = pmw3610_current_cpi();
     switch (input_mode) {
     case MOVE:
-        set_cpi_if_needed(dev, CONFIG_PMW3610_CPI);
+        err = set_cpi_if_needed(dev, cpi);
+        if (err) {
+            return err;
+        }
         dividor = CONFIG_PMW3610_CPI_DIVIDOR;
         break;
     case SCROLL:
-        set_cpi_if_needed(dev, CONFIG_PMW3610_CPI);
+        err = set_cpi_if_needed(dev, cpi);
+        if (err) {
+            return err;
+        }
         if (input_mode_changed) {
             data->scroll_delta_x = 0;
             data->scroll_delta_y = 0;
@@ -644,7 +720,10 @@ static int pmw3610_report_data(const struct device *dev) {
         dividor = 1; // this should be handled with the ticks rather than dividors
         break;
     case SNIPE:
-        set_cpi_if_needed(dev, CONFIG_PMW3610_SNIPE_CPI);
+        err = set_cpi_if_needed(dev, cpi);
+        if (err) {
+            return err;
+        }
         dividor = CONFIG_PMW3610_SNIPE_CPI_DIVIDOR;
         break;
     default:
@@ -656,7 +735,7 @@ static int pmw3610_report_data(const struct device *dev) {
     int16_t x;
     int16_t y;
 
-    int err = motion_burst_read(dev, buf, sizeof(buf));
+    err = motion_burst_read(dev, buf, sizeof(buf));
     if (err) {
         return err;
     }
@@ -1111,6 +1190,7 @@ static int pmw3610_init(const struct device *dev) {
 
     // init device pointer
     data->dev = dev;
+    pmw3610_profile_device = dev;
 
     // init smart algorithm flag;
     data->sw_smart_flag = false;
