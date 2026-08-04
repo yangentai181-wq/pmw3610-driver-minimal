@@ -717,6 +717,24 @@ static int pmw3610_async_init_configure(const struct device *dev) {
     return 0;
 }
 
+static int pmw3610_finish_init(const struct device *dev) {
+    struct pixart_data *data = dev->data;
+    int err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
+    if (err) {
+        return err;
+    }
+
+    err = set_cpi_if_needed(
+        dev, trackball_profile_cpi(&pmw3610_profile, pmw3610_precision_active));
+    if (!err) {
+        data->ready = true;
+    }
+
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
+
+    return err;
+}
+
 // checked and keep
 static void pmw3610_async_init(struct k_work *work) {
     struct k_work_delayable *work2 = (struct k_work_delayable *)work;
@@ -732,7 +750,11 @@ static void pmw3610_async_init(struct k_work *work) {
         data->async_init_step++;
 
         if (data->async_init_step == ASYNC_INIT_STEP_COUNT) {
-            data->ready = true; // sensor is ready to work
+            data->err = pmw3610_finish_init(dev);
+            if (data->err) {
+                LOG_ERR("PMW3610 initialization failed");
+                return;
+            }
             LOG_INF("PMW3610 initialized");
             set_interrupt(dev, true);
         } else {
@@ -813,9 +835,14 @@ static int pmw3610_report_data(const struct device *dev) {
     int32_t dividor;
     enum pixart_input_mode input_mode = get_input_mode_for_current_layer(dev);
     bool input_mode_changed = data->curr_mode != input_mode;
-    int err = pmw3610_set_precision_active(input_mode == SNIPE);
+    int err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
     if (err) {
         return err;
+    }
+
+    err = pmw3610_set_precision_active(input_mode == SNIPE);
+    if (err) {
+        goto mode_out;
     }
 
     uint16_t cpi = pmw3610_current_cpi();
@@ -823,14 +850,14 @@ static int pmw3610_report_data(const struct device *dev) {
     case MOVE:
         err = set_cpi_if_needed(dev, cpi);
         if (err) {
-            return err;
+            goto mode_out;
         }
         dividor = CONFIG_PMW3610_CPI_DIVIDOR;
         break;
     case SCROLL:
         err = set_cpi_if_needed(dev, cpi);
         if (err) {
-            return err;
+            goto mode_out;
         }
         if (input_mode_changed) {
             data->scroll_delta_x = 0;
@@ -841,15 +868,22 @@ static int pmw3610_report_data(const struct device *dev) {
     case SNIPE:
         err = set_cpi_if_needed(dev, cpi);
         if (err) {
-            return err;
+            goto mode_out;
         }
         dividor = CONFIG_PMW3610_SNIPE_CPI_DIVIDOR;
         break;
     default:
-        return -ENOTSUP;
+        err = -ENOTSUP;
+        goto mode_out;
     }
 
     data->curr_mode = input_mode;
+
+mode_out:
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
+    if (err) {
+        return err;
+    }
 
     int16_t x;
     int16_t y;
