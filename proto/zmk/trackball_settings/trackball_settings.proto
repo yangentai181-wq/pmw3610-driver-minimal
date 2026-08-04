@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package zmk.trackball_settings;
+
+// Keep the zero-byte get payload self-contained. Its wire encoding is identical
+// to google.protobuf.Empty without requiring a separately generated C header.
+message Empty {}
+
+message BindingSnapshot {
+    uint32 behavior_id = 1;
+    uint32 param1 = 2;
+    uint32 param2 = 3;
+}
+
+message TrackballConfig {
+    uint32 schema_version = 1;
+    uint32 normal_cpi = 2;
+    uint32 precision_cpi = 3;
+    bool enabled = 4;
+    uint32 selected_position = 5;
+    BindingSnapshot original_binding = 6;
+    uint32 revision = 7;
+    bool precision_active = 8;
+    uint32 current_cpi = 9;
+}
+
+message ApplyRequest {
+    uint32 normal_cpi = 1;
+    uint32 precision_cpi = 2;
+    bool enabled = 3;
+    uint32 selected_position = 4;
+    uint32 expected_revision = 5;
+}
+
+message ApplyResponse {
+    enum Result {
+        OK = 0;
+        INVALID_CPI = 1;
+        INVALID_POSITION = 2;
+        UNSUPPORTED_BINDING = 3;
+        STALE_REVISION = 4;
+        KEYMAP_WRITE_FAILED = 5;
+        SETTINGS_WRITE_FAILED = 6;
+        SENSOR_WRITE_FAILED = 7;
+    }
+
+    Result result = 1;
+    TrackballConfig config = 2;
+}
+
+message Request {
+    oneof request_type {
+        Empty get = 1;
+        ApplyRequest validate = 2;
+        ApplyRequest apply = 3;
+    }
+}
+
+message Response {
+    oneof response_type {
+        TrackballConfig get = 1;
+        ApplyResponse validate = 2;
+        ApplyResponse apply = 3;
+    }
+}
+
+message Notification {
+    oneof notification_type {
+        TrackballConfig changed = 1;
+    }
+}

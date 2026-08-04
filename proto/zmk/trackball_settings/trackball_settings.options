@@ -1,0 +1,2 @@
+# All Trackball Settings Studio RPC messages are fixed-size scalar messages.
+# Keep this file alongside the schema so nanopb generation remains explicit.

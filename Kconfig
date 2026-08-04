@@ -58,6 +58,15 @@ config PMW3610_TRACKBALL_SETTINGS
       changing the ZMK keymap and compensates failed keymap, sensor, or
       settings writes.
 
+config PMW3610_STUDIO_RPC
+    bool "Expose precision settings through ZMK Studio"
+    default n
+    depends on PMW3610_TRACKBALL_SETTINGS && ZMK_STUDIO_RPC
+    help
+      Register the trackball_settings custom Studio RPC subsystem. It exposes
+      get, validate, and apply operations and sends authoritative notifications
+      after a successful apply and precision-layer state transitions.
+
 config PMW3610_SNIPE_CPI_DIVIDOR
     int "PMW3610's CPI dividor in snipe mode"
     default 1

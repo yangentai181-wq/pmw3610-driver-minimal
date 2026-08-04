@@ -1,0 +1,7 @@
+tests:
+  studio_trackball_settings.unit:
+    platform_allow:
+      - native_posix_64
+    tags:
+      - trackball_settings
+      - studio
