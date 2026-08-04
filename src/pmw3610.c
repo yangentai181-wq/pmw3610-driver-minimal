@@ -38,11 +38,9 @@ static bool pmw3610_work_q_started = false;
  * locked SPI helpers below. Runtime APIs must be called from thread context. */
 K_MUTEX_DEFINE(pmw3610_runtime_lock);
 
-#define PMW3610_BOOT_CPI(cpi) ((cpi) - ((cpi) % PMW3610_CPI_STEP))
-
 static struct trackball_profile pmw3610_profile = {
-    .normal_cpi = PMW3610_BOOT_CPI(CONFIG_PMW3610_CPI),
-    .precision_cpi = PMW3610_BOOT_CPI(CONFIG_PMW3610_SNIPE_CPI),
+    .normal_cpi = CONFIG_PMW3610_CPI,
+    .precision_cpi = CONFIG_PMW3610_SNIPE_CPI,
 };
 static bool pmw3610_precision_active;
 static const struct device *pmw3610_profile_device;
@@ -653,17 +651,8 @@ static int pmw3610_async_init_configure(const struct device *dev) {
         err = reg_read(dev, reg, buf);
     }
 
-    // CPI from the runtime profile's boot defaults
+    // CPI from the validated runtime profile's boot defaults
     if (!err) {
-        if (CONFIG_PMW3610_CPI % PMW3610_CPI_STEP != 0U) {
-            LOG_WRN("Normal boot CPI %u rounded down to %u", (uint32_t)CONFIG_PMW3610_CPI,
-                    (uint32_t)PMW3610_BOOT_CPI(CONFIG_PMW3610_CPI));
-        }
-        if (CONFIG_PMW3610_SNIPE_CPI % PMW3610_CPI_STEP != 0U) {
-            LOG_WRN("Precision boot CPI %u rounded down to %u",
-                    (uint32_t)CONFIG_PMW3610_SNIPE_CPI,
-                    (uint32_t)PMW3610_BOOT_CPI(CONFIG_PMW3610_SNIPE_CPI));
-        }
         err = pmw3610_profile_snapshot(&profile, &precision_active);
     }
     if (!err) {

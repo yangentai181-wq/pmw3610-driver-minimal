@@ -27,10 +27,9 @@ config PMW3610_CPI
     range 200 3200
     help
       Initial normal CPI for the runtime trackball profile. The profile can
-      be updated at runtime; new values must use a 200 CPI step. For backward
-      compatibility, legacy boot values between steps round down to the
-      nearest supported CPI. The normalized profile must still have precision
-      CPI less than or equal to normal CPI.
+      be updated at runtime. This value must be between 200 and 3200 in
+      200-CPI steps, and must be at least the precision CPI boot default.
+      The build rejects invalid boot-profile values.
 
 config PMW3610_CPI_DIVIDOR
     int "PMW3610's default CPI dividor"
@@ -45,10 +44,9 @@ config PMW3610_SNIPE_CPI
     range 200 3200
     help
       Initial precision CPI for the runtime trackball profile. The profile
-      can be updated at runtime; new values must use a 200 CPI step. For
-      backward compatibility, legacy boot values between steps round down to
-      the nearest supported CPI. The normalized profile must still have
-      precision CPI less than or equal to normal CPI.
+      can be updated at runtime. This value must be between 200 and 3200 in
+      200-CPI steps and must not exceed the normal CPI boot default. The
+      build rejects invalid boot-profile values.
 
 config PMW3610_SNIPE_CPI_DIVIDOR
     int "PMW3610's CPI dividor in snipe mode"
