@@ -25,6 +25,7 @@ if(CONFIG_PMW3610)
 endif()
 
 zephyr_library_sources_ifdef(CONFIG_PMW3610 src/trackball_profile.c)
+zephyr_library_sources_ifdef(CONFIG_PMW3610_TRACKBALL_SETTINGS src/trackball_settings.c)
 zephyr_library_sources_ifdef(CONFIG_PMW3610 src/pmw3610.c)
 zephyr_library_sources_ifdef(CONFIG_PMW3610_DATA_LOGGER src/data_logger.c)
 zephyr_library_sources_ifdef(CONFIG_PMW3610_DATA_LOGGER_BLE src/data_logger_ble.c)

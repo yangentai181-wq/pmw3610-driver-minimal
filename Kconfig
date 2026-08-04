@@ -48,6 +48,16 @@ config PMW3610_SNIPE_CPI
       200-CPI steps and must not exceed the normal CPI boot default. The
       build rejects invalid boot-profile values.
 
+config PMW3610_TRACKBALL_SETTINGS
+    bool "Persist precision key settings"
+    default n
+    depends on SETTINGS
+    help
+      Persist the precision-mode key transaction and its runtime CPI profile
+      under trackball/settings. The transaction validates both bindings before
+      changing the ZMK keymap and compensates failed keymap, sensor, or
+      settings writes.
+
 config PMW3610_SNIPE_CPI_DIVIDOR
     int "PMW3610's CPI dividor in snipe mode"
     default 1
