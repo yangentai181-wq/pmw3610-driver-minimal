@@ -12,6 +12,11 @@
 
 #include <pmw3610/trackball_settings.h>
 
+_Static_assert(offsetof(struct trackball_settings_adapter, apply_profile) +
+                   sizeof(((struct trackball_settings_adapter *)0)->apply_profile) ==
+               sizeof(struct trackball_settings_adapter),
+               "trackball_settings_adapter must retain exactly five callbacks");
+
 #define TEST_POSITION_COUNT 12U
 #define KEY_A 0x00070004U
 #define KEY_B 0x00070005U
@@ -158,22 +163,12 @@ static int fake_apply_profile(const struct trackball_profile *profile) {
     return 0;
 }
 
-static int fake_get_profile(struct trackball_profile *profile) {
-    if (profile == NULL) {
-        return -EINVAL;
-    }
-
-    *profile = fake.profile;
-    return 0;
-}
-
 static const struct trackball_settings_adapter adapter = {
     .get_binding = fake_get_binding,
     .set_binding = fake_set_binding,
     .save_keymap = fake_save_keymap,
     .save_settings = fake_save_settings,
     .apply_profile = fake_apply_profile,
-    .get_profile = fake_get_profile,
 };
 
 static struct trackball_settings_record disabled_record(uint32_t revision) {
@@ -346,6 +341,7 @@ static int test_mt_param1_equal_to_precision_layer_enables_reloads_and_disables(
     struct trackball_settings_request enable = request(800, 200, true, 2, 3);
     struct trackball_settings_request disable;
     struct trackball_settings_record saved;
+    struct trackball_settings_record reload_current;
     struct zmk_behavior_binding original =
         binding("mt", TRACKBALL_SETTINGS_PRECISION_LAYER, KEY_C);
     struct zmk_behavior_binding wrapper =
@@ -359,9 +355,12 @@ static int test_mt_param1_equal_to_precision_layer_enables_reloads_and_disables(
     CHECK_INT((int)TRACKBALL_SETTINGS_PRECISION_LAYER, (int)current.original_param1);
 
     saved = current;
-    fake_reset(&saved);
+    reload_current = disabled_record(saved.revision);
+    reload_current.normal_cpi = saved.normal_cpi;
+    reload_current.precision_cpi = saved.precision_cpi;
+    fake_reset(&reload_current);
     fake_put_binding(2, original);
-    CHECK_INT(0, trackball_settings_reload(&saved, &adapter));
+    CHECK_INT(0, trackball_settings_reload(&reload_current, &saved, &adapter));
     CHECK(binding_equal(fake_get_binding(0, 2), &wrapper),
           "reload must reconstruct a mod-tap whose modifier mask is 8");
 
@@ -633,6 +632,7 @@ static int test_rolls_back_after_settings_save_failure_and_returns_that_error(vo
 
 static int test_reload_validates_schema_and_reapplies_wrapper_and_profile(void) {
     struct trackball_settings_record current = disabled_record(0);
+    const struct trackball_settings_record initial = current;
     struct trackball_settings_request next = request(1200, 400, true, 6, 0);
     struct trackball_settings_record saved;
     struct zmk_behavior_binding original = binding("kp", KEY_C, 0);
@@ -643,27 +643,31 @@ static int test_reload_validates_schema_and_reapplies_wrapper_and_profile(void) 
     CHECK_INT(0, trackball_settings_apply(&current, &next, &adapter));
     saved = current;
 
-    fake_reset(&saved);
+    current = initial;
+    fake_reset(&current);
     fake_put_binding(6, original);
-    CHECK_INT(0, trackball_settings_reload(&saved, &adapter));
+    CHECK_INT(0, trackball_settings_reload(&current, &saved, &adapter));
     CHECK(binding_equal(fake_get_binding(0, 6), &expected_wrapper),
           "reload must restore the configured wrapper");
     CHECK_INT(1200, fake.profile.normal_cpi);
     CHECK_INT(400, fake.profile.precision_cpi);
     CHECK_INT(0, fake.save_keymap_calls);
     CHECK_INT(0, fake.save_settings_calls);
+    CHECK(record_equal(&current, &saved), "reload must commit the supplied record on success");
 
     saved.schema_version = TRACKBALL_SETTINGS_SCHEMA_VERSION + 1;
+    current = initial;
     fake_reset(&current);
     fake_put_binding(6, original);
-    CHECK_INT(-EINVAL, trackball_settings_reload(&saved, &adapter));
+    CHECK_INT(-EINVAL, trackball_settings_reload(&current, &saved, &adapter));
     CHECK_INT(0, check_no_writes());
     return 0;
 }
 
-static void prepare_reload_failure(struct trackball_settings_record *record,
-                                   struct trackball_profile *previous_profile,
+static void prepare_reload_failure(struct trackball_settings_record *current,
+                                   struct trackball_settings_record *record,
                                    struct zmk_behavior_binding *original) {
+    *current = disabled_record(0);
     *record = (struct trackball_settings_record){
         .schema_version = TRACKBALL_SETTINGS_SCHEMA_VERSION,
         .enabled = true,
@@ -675,62 +679,68 @@ static void prepare_reload_failure(struct trackball_settings_record *record,
         .original_param2 = 0,
         .revision = 1,
     };
-    *previous_profile = (struct trackball_profile){.normal_cpi = 800, .precision_cpi = 200};
     *original = binding("kp", KEY_C, 0);
-    fake_reset(record);
-    fake.profile = *previous_profile;
+    fake_reset(current);
     fake_put_binding(record->selected_position, *original);
 }
 
-static int check_reload_rollback(const struct trackball_settings_record *record,
-                                 const struct trackball_profile *previous_profile,
+static int check_reload_rollback(const struct trackball_settings_record *current,
+                                 const struct trackball_settings_record *previous,
+                                 const struct trackball_settings_record *record,
                                  const struct zmk_behavior_binding *original) {
     CHECK(binding_equal(fake_get_binding(TRACKBALL_SETTINGS_BASE_LAYER, record->selected_position),
                         original),
           "reload failure must restore the original binding");
-    CHECK_INT((int)previous_profile->normal_cpi, fake.profile.normal_cpi);
-    CHECK_INT((int)previous_profile->precision_cpi, fake.profile.precision_cpi);
+    CHECK_INT((int)current->normal_cpi, fake.profile.normal_cpi);
+    CHECK_INT((int)current->precision_cpi, fake.profile.precision_cpi);
+    CHECK(record_equal(current, previous), "reload failure must preserve the prior record");
     CHECK_INT(0, fake.save_keymap_calls);
     CHECK_INT(0, fake.save_settings_calls);
     return 0;
 }
 
 static int test_reload_restores_snapshot_after_set_failure(void) {
+    struct trackball_settings_record current;
+    struct trackball_settings_record previous;
     struct trackball_settings_record record;
-    struct trackball_profile previous_profile;
     struct zmk_behavior_binding original;
 
-    prepare_reload_failure(&record, &previous_profile, &original);
+    prepare_reload_failure(&current, &record, &original);
+    previous = current;
     fake.fail_set_after_write_call = 1;
     fake.set_error = -EACCES;
 
-    CHECK_INT(-EACCES, trackball_settings_reload(&record, &adapter));
-    return check_reload_rollback(&record, &previous_profile, &original);
+    CHECK_INT(-EACCES, trackball_settings_reload(&current, &record, &adapter));
+    return check_reload_rollback(&current, &previous, &record, &original);
 }
 
 static int test_reload_restores_profile_after_apply_profile_failure(void) {
+    struct trackball_settings_record current;
+    struct trackball_settings_record previous;
     struct trackball_settings_record record;
-    struct trackball_profile previous_profile;
     struct zmk_behavior_binding original;
 
-    prepare_reload_failure(&record, &previous_profile, &original);
+    prepare_reload_failure(&current, &record, &original);
+    previous = current;
     fake.fail_apply_profile_after_write_call = 1;
     fake.apply_profile_error = -EAGAIN;
 
-    CHECK_INT(-EAGAIN, trackball_settings_reload(&record, &adapter));
-    return check_reload_rollback(&record, &previous_profile, &original);
+    CHECK_INT(-EAGAIN, trackball_settings_reload(&current, &record, &adapter));
+    return check_reload_rollback(&current, &previous, &record, &original);
 }
 
 static int test_reload_restores_profile_after_binding_readback_failure(void) {
+    struct trackball_settings_record current;
+    struct trackball_settings_record previous;
     struct trackball_settings_record record;
-    struct trackball_profile previous_profile;
     struct zmk_behavior_binding original;
 
-    prepare_reload_failure(&record, &previous_profile, &original);
+    prepare_reload_failure(&current, &record, &original);
+    previous = current;
     fake.ignore_set_call = 1;
 
-    CHECK_INT(-EIO, trackball_settings_reload(&record, &adapter));
-    return check_reload_rollback(&record, &previous_profile, &original);
+    CHECK_INT(-EIO, trackball_settings_reload(&current, &record, &adapter));
+    return check_reload_rollback(&current, &previous, &record, &original);
 }
 
 static int test_rejects_zero_and_short_storage_reads_without_writes(void) {
