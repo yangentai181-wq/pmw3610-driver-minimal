@@ -51,14 +51,28 @@ struct trackball_settings_rpc_service {
     void *context;
     int (*get_record)(void *context, struct trackball_settings_record *record);
     int (*validate)(void *context, const struct trackball_settings_request *request);
-    int (*apply)(void *context, const struct trackball_settings_request *request);
+    int (*apply)(void *context, const struct trackball_settings_request *request,
+                 enum trackball_settings_failure_stage *failure_stage);
     int (*set_precision_active)(void *context, bool active);
-    uint16_t (*current_cpi)(void *context);
-    bool (*precision_active)(void *context);
+    int (*get_precision_snapshot)(void *context, struct pmw3610_precision_snapshot *snapshot);
     void (*notify)(void *context, const struct trackball_settings_rpc_config *config);
 };
 
-static enum trackball_settings_rpc_result trackball_settings_rpc_result_from_error(int err) {
+static enum trackball_settings_rpc_result trackball_settings_rpc_result_from_error(
+    int err, enum trackball_settings_failure_stage failure_stage) {
+    if (err != 0) {
+        switch (failure_stage) {
+        case TRACKBALL_SETTINGS_FAILURE_STAGE_KEYMAP:
+            return TRACKBALL_SETTINGS_RPC_KEYMAP_WRITE_FAILED;
+        case TRACKBALL_SETTINGS_FAILURE_STAGE_SETTINGS:
+            return TRACKBALL_SETTINGS_RPC_SETTINGS_WRITE_FAILED;
+        case TRACKBALL_SETTINGS_FAILURE_STAGE_SENSOR:
+            return TRACKBALL_SETTINGS_RPC_SENSOR_WRITE_FAILED;
+        case TRACKBALL_SETTINGS_FAILURE_STAGE_NONE:
+            break;
+        }
+    }
+
     switch (err) {
     case 0:
         return TRACKBALL_SETTINGS_RPC_OK;
@@ -68,12 +82,6 @@ static enum trackball_settings_rpc_result trackball_settings_rpc_result_from_err
         return TRACKBALL_SETTINGS_RPC_UNSUPPORTED_BINDING;
     case -EINVAL:
         return TRACKBALL_SETTINGS_RPC_INVALID_POSITION;
-    case -EIO:
-        return TRACKBALL_SETTINGS_RPC_KEYMAP_WRITE_FAILED;
-    case -ENOSPC:
-        return TRACKBALL_SETTINGS_RPC_SETTINGS_WRITE_FAILED;
-    case -EAGAIN:
-        return TRACKBALL_SETTINGS_RPC_SENSOR_WRITE_FAILED;
     default:
         return TRACKBALL_SETTINGS_RPC_SETTINGS_WRITE_FAILED;
     }
@@ -83,14 +91,19 @@ static int trackball_settings_rpc_fill_config(
     const struct trackball_settings_rpc_service *service,
     struct trackball_settings_rpc_config *config) {
     struct trackball_settings_record record;
+    struct pmw3610_precision_snapshot precision_snapshot;
     int err;
 
     if (service == NULL || config == NULL || service->get_record == NULL ||
-        service->current_cpi == NULL || service->precision_active == NULL) {
+        service->get_precision_snapshot == NULL) {
         return -EINVAL;
     }
 
     err = service->get_record(service->context, &record);
+    if (err != 0) {
+        return err;
+    }
+    err = service->get_precision_snapshot(service->context, &precision_snapshot);
     if (err != 0) {
         return err;
     }
@@ -108,8 +121,8 @@ static int trackball_settings_rpc_fill_config(
                 .param2 = record.original_param2,
             },
         .revision = record.revision,
-        .precision_active = service->precision_active(service->context),
-        .current_cpi = service->current_cpi(service->context),
+        .precision_active = precision_snapshot.precision_active,
+        .current_cpi = precision_snapshot.current_cpi,
     };
     return 0;
 }
@@ -119,6 +132,7 @@ static int trackball_settings_rpc_dispatch(
     enum trackball_settings_rpc_request_kind kind,
     const struct trackball_settings_request *request,
     struct trackball_settings_rpc_response *response) {
+    enum trackball_settings_failure_stage failure_stage = TRACKBALL_SETTINGS_FAILURE_STAGE_NONE;
     int err = 0;
     int readback_err;
 
@@ -133,7 +147,7 @@ static int trackball_settings_rpc_dispatch(
 
     if (kind == TRACKBALL_SETTINGS_RPC_GET) {
         err = trackball_settings_rpc_fill_config(service, &response->config);
-        response->result = trackball_settings_rpc_result_from_error(err);
+        response->result = trackball_settings_rpc_result_from_error(err, failure_stage);
         return 0;
     }
     if ((kind != TRACKBALL_SETTINGS_RPC_VALIDATE && kind != TRACKBALL_SETTINGS_RPC_APPLY) ||
@@ -146,14 +160,15 @@ static int trackball_settings_rpc_dispatch(
     } else {
         err = service->validate(service->context, request);
         if (err == 0 && kind == TRACKBALL_SETTINGS_RPC_APPLY) {
-            err = service->apply(service->context, request);
+            err = service->apply(service->context, request, &failure_stage);
         }
-        response->result = trackball_settings_rpc_result_from_error(err);
+        response->result = trackball_settings_rpc_result_from_error(err, failure_stage);
     }
 
     readback_err = trackball_settings_rpc_fill_config(service, &response->config);
     if (response->result == TRACKBALL_SETTINGS_RPC_OK && readback_err != 0) {
-        response->result = trackball_settings_rpc_result_from_error(readback_err);
+        response->result = trackball_settings_rpc_result_from_error(
+            readback_err, TRACKBALL_SETTINGS_FAILURE_STAGE_NONE);
     }
     if (kind == TRACKBALL_SETTINGS_RPC_APPLY && response->result == TRACKBALL_SETTINGS_RPC_OK &&
         service->notify != NULL) {
@@ -176,7 +191,8 @@ static void trackball_settings_rpc_response_with_result(
     };
     err = trackball_settings_rpc_fill_config(service, &response->config);
     if (err != 0) {
-        response->result = trackball_settings_rpc_result_from_error(err);
+        response->result = trackball_settings_rpc_result_from_error(
+            err, TRACKBALL_SETTINGS_FAILURE_STAGE_NONE);
     }
 }
 #endif
@@ -251,11 +267,10 @@ struct trackball_settings_rpc_test_response {
 struct trackball_settings_rpc_test_context {
     struct trackball_settings_record record;
     const struct trackball_settings_adapter *adapter;
-    bool precision_active;
-    uint16_t current_cpi;
     int notification_count;
     struct trackball_settings_rpc_test_config last_notification;
     int (*set_precision_active)(bool active, void *user_data);
+    int (*get_precision_snapshot)(struct pmw3610_precision_snapshot *snapshot, void *user_data);
     void *user_data;
 };
 
@@ -302,54 +317,34 @@ static int trackball_settings_rpc_test_validate(void *context,
 }
 
 static int trackball_settings_rpc_test_apply(void *context,
-                                             const struct trackball_settings_request *request) {
+                                             const struct trackball_settings_request *request,
+                                             enum trackball_settings_failure_stage *failure_stage) {
     struct trackball_settings_rpc_test_context *test_context = context;
-    struct trackball_profile profile;
-    int err;
 
     if (test_context == NULL) {
         return -EINVAL;
     }
-    err = trackball_settings_apply(&test_context->record, request, test_context->adapter);
-    if (err != 0) {
-        return err;
-    }
-    profile = (struct trackball_profile){
-        .normal_cpi = test_context->record.normal_cpi,
-        .precision_cpi = test_context->record.precision_cpi,
-    };
-    test_context->current_cpi =
-        trackball_profile_cpi(&profile, test_context->precision_active);
-    return 0;
+    return trackball_settings_apply_with_failure_stage(&test_context->record, request,
+                                                       test_context->adapter, failure_stage);
 }
 
 static int trackball_settings_rpc_test_set_precision_active(void *context, bool active) {
     struct trackball_settings_rpc_test_context *test_context = context;
-    struct trackball_profile profile;
-    int err;
 
     if (test_context == NULL || test_context->set_precision_active == NULL) {
         return -EINVAL;
     }
-    err = test_context->set_precision_active(active, test_context->user_data);
-    if (err != 0) {
-        return err;
+    return test_context->set_precision_active(active, test_context->user_data);
+}
+
+static int trackball_settings_rpc_test_get_precision_snapshot(
+    void *context, struct pmw3610_precision_snapshot *snapshot) {
+    struct trackball_settings_rpc_test_context *test_context = context;
+
+    if (test_context == NULL || test_context->get_precision_snapshot == NULL) {
+        return -EINVAL;
     }
-    test_context->precision_active = active;
-    profile = (struct trackball_profile){
-        .normal_cpi = test_context->record.normal_cpi,
-        .precision_cpi = test_context->record.precision_cpi,
-    };
-    test_context->current_cpi = trackball_profile_cpi(&profile, active);
-    return 0;
-}
-
-static uint16_t trackball_settings_rpc_test_current_cpi(void *context) {
-    return ((struct trackball_settings_rpc_test_context *)context)->current_cpi;
-}
-
-static bool trackball_settings_rpc_test_precision_active(void *context) {
-    return ((struct trackball_settings_rpc_test_context *)context)->precision_active;
+    return test_context->get_precision_snapshot(snapshot, test_context->user_data);
 }
 
 static void trackball_settings_rpc_test_notify(
@@ -368,8 +363,7 @@ static struct trackball_settings_rpc_service trackball_settings_rpc_test_service
         .validate = trackball_settings_rpc_test_validate,
         .apply = trackball_settings_rpc_test_apply,
         .set_precision_active = trackball_settings_rpc_test_set_precision_active,
-        .current_cpi = trackball_settings_rpc_test_current_cpi,
-        .precision_active = trackball_settings_rpc_test_precision_active,
+        .get_precision_snapshot = trackball_settings_rpc_test_get_precision_snapshot,
         .notify = trackball_settings_rpc_test_notify,
     };
 }
@@ -630,12 +624,6 @@ int trackball_settings_rpc_test_precision_layer_changed(
 
 LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
 
-struct trackball_settings_rpc_production_context {
-    bool precision_active;
-};
-
-static struct trackball_settings_rpc_production_context trackball_settings_rpc_production_context;
-
 static int trackball_settings_rpc_production_get_record(
     void *context, struct trackball_settings_record *record) {
     (void)context;
@@ -649,28 +637,21 @@ static int trackball_settings_rpc_production_validate(
 }
 
 static int trackball_settings_rpc_production_apply(
-    void *context, const struct trackball_settings_request *request) {
+    void *context, const struct trackball_settings_request *request,
+    enum trackball_settings_failure_stage *failure_stage) {
     (void)context;
-    return trackball_settings_apply_request(request);
+    return trackball_settings_apply_request_with_failure_stage(request, failure_stage);
 }
 
 static int trackball_settings_rpc_production_set_precision_active(void *context, bool active) {
-    struct trackball_settings_rpc_production_context *production_context = context;
-    int err = pmw3610_set_precision_active(active);
-
-    if (err == 0) {
-        production_context->precision_active = active;
-    }
-    return err;
-}
-
-static uint16_t trackball_settings_rpc_production_current_cpi(void *context) {
     (void)context;
-    return pmw3610_current_cpi();
+    return pmw3610_set_precision_active(active);
 }
 
-static bool trackball_settings_rpc_production_precision_active(void *context) {
-    return ((struct trackball_settings_rpc_production_context *)context)->precision_active;
+static int trackball_settings_rpc_production_get_precision_snapshot(
+    void *context, struct pmw3610_precision_snapshot *snapshot) {
+    (void)context;
+    return pmw3610_get_precision_snapshot(snapshot);
 }
 
 static void trackball_settings_rpc_config_to_pb(
@@ -761,13 +742,12 @@ static void trackball_settings_rpc_production_notify(
 }
 
 static const struct trackball_settings_rpc_service trackball_settings_rpc_production_service = {
-    .context = &trackball_settings_rpc_production_context,
+    .context = NULL,
     .get_record = trackball_settings_rpc_production_get_record,
     .validate = trackball_settings_rpc_production_validate,
     .apply = trackball_settings_rpc_production_apply,
     .set_precision_active = trackball_settings_rpc_production_set_precision_active,
-    .current_cpi = trackball_settings_rpc_production_current_cpi,
-    .precision_active = trackball_settings_rpc_production_precision_active,
+    .get_precision_snapshot = trackball_settings_rpc_production_get_precision_snapshot,
     .notify = trackball_settings_rpc_production_notify,
 };
 

@@ -443,9 +443,10 @@ static int trackball_settings_verify_readback(
     return 0;
 }
 
-int trackball_settings_apply(struct trackball_settings_record *current,
-                             const struct trackball_settings_request *request,
-                             const struct trackball_settings_adapter *adapter) {
+int trackball_settings_apply_with_failure_stage(
+    struct trackball_settings_record *current, const struct trackball_settings_request *request,
+    const struct trackball_settings_adapter *adapter,
+    enum trackball_settings_failure_stage *failure_stage) {
     struct trackball_settings_record previous;
     struct trackball_settings_record next;
     struct trackball_settings_binding_info previous_original = {0};
@@ -456,7 +457,12 @@ int trackball_settings_apply(struct trackball_settings_record *current,
     size_t snapshot_count = 0;
     bool restore_previous;
     bool install_new;
+    enum trackball_settings_failure_stage stage = TRACKBALL_SETTINGS_FAILURE_STAGE_NONE;
     int err;
+
+    if (failure_stage != NULL) {
+        *failure_stage = TRACKBALL_SETTINGS_FAILURE_STAGE_NONE;
+    }
 
     err = trackball_settings_validate(current, request, adapter);
     if (err != 0) {
@@ -526,6 +532,7 @@ int trackball_settings_apply(struct trackball_settings_record *current,
         err = adapter->set_binding(TRACKBALL_SETTINGS_BASE_LAYER, previous.selected_position,
                                    previous_original.binding);
         if (err != 0) {
+            stage = TRACKBALL_SETTINGS_FAILURE_STAGE_KEYMAP;
             goto rollback;
         }
     }
@@ -533,24 +540,29 @@ int trackball_settings_apply(struct trackball_settings_record *current,
         err = adapter->set_binding(TRACKBALL_SETTINGS_BASE_LAYER, request->selected_position,
                                    new_wrapper);
         if (err != 0) {
+            stage = TRACKBALL_SETTINGS_FAILURE_STAGE_KEYMAP;
             goto rollback;
         }
     }
     err = adapter->apply_profile(&next_profile);
     if (err != 0) {
+        stage = TRACKBALL_SETTINGS_FAILURE_STAGE_SENSOR;
         goto rollback;
     }
     err = adapter->save_keymap();
     if (err != 0) {
+        stage = TRACKBALL_SETTINGS_FAILURE_STAGE_KEYMAP;
         goto rollback;
     }
     err = adapter->save_settings(&next);
     if (err != 0) {
+        stage = TRACKBALL_SETTINGS_FAILURE_STAGE_SETTINGS;
         goto rollback;
     }
     err = trackball_settings_verify_readback(adapter, &previous, request, &previous_original,
                                              &new_wrapper);
     if (err != 0) {
+        stage = TRACKBALL_SETTINGS_FAILURE_STAGE_KEYMAP;
         goto rollback;
     }
 
@@ -559,7 +571,16 @@ int trackball_settings_apply(struct trackball_settings_record *current,
 
 rollback:
     trackball_settings_rollback(adapter, snapshots, snapshot_count, &previous);
+    if (failure_stage != NULL) {
+        *failure_stage = stage;
+    }
     return err;
+}
+
+int trackball_settings_apply(struct trackball_settings_record *current,
+                             const struct trackball_settings_request *request,
+                             const struct trackball_settings_adapter *adapter) {
+    return trackball_settings_apply_with_failure_stage(current, request, adapter, NULL);
 }
 
 int trackball_settings_reload(struct trackball_settings_record *current,
@@ -762,9 +783,14 @@ int trackball_settings_validate_request(const struct trackball_settings_request 
     return err;
 }
 
-int trackball_settings_apply_request(const struct trackball_settings_request *request) {
+int trackball_settings_apply_request_with_failure_stage(
+    const struct trackball_settings_request *request,
+    enum trackball_settings_failure_stage *failure_stage) {
     int err;
 
+    if (failure_stage != NULL) {
+        *failure_stage = TRACKBALL_SETTINGS_FAILURE_STAGE_NONE;
+    }
     if (request == NULL) {
         return -EINVAL;
     }
@@ -772,10 +798,15 @@ int trackball_settings_apply_request(const struct trackball_settings_request *re
     if (err != 0) {
         return err;
     }
-    err = trackball_settings_apply(&trackball_settings_current, request,
-                                   &trackball_settings_zephyr_adapter);
+    err = trackball_settings_apply_with_failure_stage(&trackball_settings_current, request,
+                                                      &trackball_settings_zephyr_adapter,
+                                                      failure_stage);
     (void)k_mutex_unlock(&trackball_settings_lock);
     return err;
+}
+
+int trackball_settings_apply_request(const struct trackball_settings_request *request) {
+    return trackball_settings_apply_request_with_failure_stage(request, NULL);
 }
 
 static int trackball_settings_settings_set(const char *name, size_t len, settings_read_cb read_cb,
@@ -839,6 +870,16 @@ int trackball_settings_validate_request(const struct trackball_settings_request 
 
 int trackball_settings_apply_request(const struct trackball_settings_request *request) {
     (void)request;
+    return -ENOTSUP;
+}
+
+int trackball_settings_apply_request_with_failure_stage(
+    const struct trackball_settings_request *request,
+    enum trackball_settings_failure_stage *failure_stage) {
+    (void)request;
+    if (failure_stage != NULL) {
+        *failure_stage = TRACKBALL_SETTINGS_FAILURE_STAGE_NONE;
+    }
     return -ENOTSUP;
 }
 

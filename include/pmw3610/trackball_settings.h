@@ -50,6 +50,13 @@ struct trackball_settings_request {
     uint32_t expected_revision;
 };
 
+enum trackball_settings_failure_stage {
+    TRACKBALL_SETTINGS_FAILURE_STAGE_NONE = 0,
+    TRACKBALL_SETTINGS_FAILURE_STAGE_KEYMAP,
+    TRACKBALL_SETTINGS_FAILURE_STAGE_SETTINGS,
+    TRACKBALL_SETTINGS_FAILURE_STAGE_SENSOR,
+};
+
 struct trackball_settings_adapter {
     const struct zmk_behavior_binding *(*get_binding)(uint8_t layer, uint8_t position);
     int (*set_binding)(uint8_t layer, uint8_t position, struct zmk_behavior_binding binding);
@@ -67,6 +74,11 @@ int trackball_settings_validate(const struct trackball_settings_record *current,
 int trackball_settings_apply(struct trackball_settings_record *current,
                              const struct trackball_settings_request *request,
                              const struct trackball_settings_adapter *adapter);
+/* Reports the failed write boundary without changing the transaction's errno contract. */
+int trackball_settings_apply_with_failure_stage(
+    struct trackball_settings_record *current, const struct trackball_settings_request *request,
+    const struct trackball_settings_adapter *adapter,
+    enum trackball_settings_failure_stage *failure_stage);
 /* current supplies rollback state and changes only after a successful reload. */
 int trackball_settings_reload(struct trackball_settings_record *current,
                               const struct trackball_settings_record *record,
@@ -78,6 +90,9 @@ int trackball_settings_read_record_exact(struct trackball_settings_record *recor
 int trackball_settings_get_record(struct trackball_settings_record *record);
 int trackball_settings_validate_request(const struct trackball_settings_request *request);
 int trackball_settings_apply_request(const struct trackball_settings_request *request);
+int trackball_settings_apply_request_with_failure_stage(
+    const struct trackball_settings_request *request,
+    enum trackball_settings_failure_stage *failure_stage);
 
 #ifdef __cplusplus
 }

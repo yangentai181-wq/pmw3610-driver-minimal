@@ -57,11 +57,10 @@ struct trackball_settings_rpc_test_response {
 struct trackball_settings_rpc_test_context {
     struct trackball_settings_record record;
     const struct trackball_settings_adapter *adapter;
-    bool precision_active;
-    uint16_t current_cpi;
     int notification_count;
     struct trackball_settings_rpc_test_config last_notification;
     int (*set_precision_active)(bool active, void *user_data);
+    int (*get_precision_snapshot)(struct pmw3610_precision_snapshot *snapshot, void *user_data);
     void *user_data;
 };
 
@@ -94,6 +93,16 @@ struct fake_state {
     int apply_profile_calls;
     int set_precision_active_calls;
     bool last_precision_active;
+    int fail_set_binding_call;
+    int fail_save_keymap_call;
+    int fail_save_settings_call;
+    int fail_apply_profile_call;
+    int set_binding_error;
+    int save_keymap_error;
+    int save_settings_error;
+    int apply_profile_error;
+    bool runtime_precision_active;
+    uint16_t runtime_current_cpi;
 };
 
 static struct fake_state fake;
@@ -109,6 +118,9 @@ static const struct zmk_behavior_binding *fake_get_binding(uint8_t layer, uint8_
 
 static int fake_set_binding(uint8_t layer, uint8_t position, struct zmk_behavior_binding binding) {
     fake.set_binding_calls++;
+    if (fake.fail_set_binding_call == fake.set_binding_calls) {
+        return fake.set_binding_error;
+    }
     if (layer != TRACKBALL_SETTINGS_BASE_LAYER || position >= TEST_POSITION_COUNT) {
         return -EINVAL;
     }
@@ -120,18 +132,28 @@ static int fake_set_binding(uint8_t layer, uint8_t position, struct zmk_behavior
 
 static int fake_save_keymap(void) {
     fake.save_keymap_calls++;
+    if (fake.fail_save_keymap_call == fake.save_keymap_calls) {
+        return fake.save_keymap_error;
+    }
     return 0;
 }
 
 static int fake_save_settings(const struct trackball_settings_record *record) {
     fake.save_settings_calls++;
+    if (fake.fail_save_settings_call == fake.save_settings_calls) {
+        return fake.save_settings_error;
+    }
     fake.persisted = *record;
     return 0;
 }
 
 static int fake_apply_profile(const struct trackball_profile *profile) {
     fake.apply_profile_calls++;
+    if (fake.fail_apply_profile_call == fake.apply_profile_calls) {
+        return fake.apply_profile_error;
+    }
     fake.profile = *profile;
+    fake.runtime_current_cpi = trackball_profile_cpi(profile, fake.runtime_precision_active);
     return 0;
 }
 
@@ -140,6 +162,26 @@ static int fake_set_precision_active(bool active, void *user_data) {
 
     state->set_precision_active_calls++;
     state->last_precision_active = active;
+    state->runtime_precision_active = active;
+    state->runtime_current_cpi = trackball_profile_cpi(&state->profile, active);
+    return 0;
+}
+
+static int fake_report_data_set_precision_active(bool active) {
+    return fake_set_precision_active(active, &fake);
+}
+
+static int fake_get_precision_snapshot(struct pmw3610_precision_snapshot *snapshot,
+                                       void *user_data) {
+    const struct fake_state *state = user_data;
+
+    if (snapshot == NULL || state == NULL) {
+        return -EINVAL;
+    }
+    *snapshot = (struct pmw3610_precision_snapshot){
+        .precision_active = state->runtime_precision_active,
+        .current_cpi = state->runtime_current_cpi,
+    };
     return 0;
 }
 
@@ -181,6 +223,12 @@ static void fake_reset(const struct trackball_settings_record *record, const cha
         .precision_cpi = record->precision_cpi,
     };
     fake.persisted = *record;
+    fake.set_binding_error = -EIO;
+    fake.save_keymap_error = -EAGAIN;
+    fake.save_settings_error = -EIO;
+    fake.apply_profile_error = -EIO;
+    fake.runtime_precision_active = false;
+    fake.runtime_current_cpi = record->normal_cpi;
     if (behavior != NULL) {
         fake.bindings[5] = (struct zmk_behavior_binding){
             .behavior_dev = behavior,
@@ -196,9 +244,8 @@ static struct trackball_settings_rpc_test_context test_context(
     return (struct trackball_settings_rpc_test_context){
         .record = *record,
         .adapter = &adapter,
-        .precision_active = false,
-        .current_cpi = record->normal_cpi,
         .set_precision_active = fake_set_precision_active,
+        .get_precision_snapshot = fake_get_precision_snapshot,
         .user_data = &fake,
     };
 }
@@ -354,6 +401,7 @@ static int test_apply_returns_persisted_readback_and_notifies(void) {
 
     fake_reset(&record, "kp");
     context = test_context(&record);
+    CHECK_EQ(0, fake_report_data_set_precision_active(true));
 
     CHECK_EQ(0, trackball_settings_rpc_test_dispatch(&context, TRACKBALL_SETTINGS_RPC_TEST_APPLY,
                                                       &request, &response));
@@ -364,8 +412,9 @@ static int test_apply_returns_persisted_readback_and_notifies(void) {
     CHECK_EQ(TRACKBALL_SETTINGS_TEST_BEHAVIOR_ID_KP, response.config.original_binding.behavior_id);
     CHECK_EQ(KEY_A, response.config.original_binding.param1);
     CHECK_EQ(8, response.config.revision);
-    CHECK(!response.config.precision_active, "apply must report the current precision state");
-    CHECK_EQ(800, response.config.current_cpi);
+    CHECK(response.config.precision_active,
+          "apply must read the current precision state from the runtime snapshot");
+    CHECK_EQ(200, response.config.current_cpi);
     CHECK_EQ(1, fake.set_binding_calls);
     CHECK_EQ(1, fake.apply_profile_calls);
     CHECK_EQ(1, fake.save_keymap_calls);
@@ -373,7 +422,83 @@ static int test_apply_returns_persisted_readback_and_notifies(void) {
     CHECK_EQ(1, context.notification_count);
     CHECK(context.last_notification.enabled, "success notification must contain committed config");
     CHECK_EQ(8, context.last_notification.revision);
-    CHECK_EQ(800, context.last_notification.current_cpi);
+    CHECK(context.last_notification.precision_active,
+          "the success notification must use the runtime precision snapshot");
+    CHECK_EQ(200, context.last_notification.current_cpi);
+    return 0;
+}
+
+static int test_apply_maps_sensor_failure_stage_independent_of_errno(void) {
+    struct trackball_settings_record record = disabled_record(7);
+    struct trackball_settings_request request = apply_request(800, 200, true, 5, 7);
+    struct trackball_settings_rpc_test_context context;
+    struct trackball_settings_rpc_test_response response = {0};
+
+    fake_reset(&record, "kp");
+    fake.fail_apply_profile_call = 1;
+    fake.apply_profile_error = -EIO;
+    context = test_context(&record);
+
+    CHECK_EQ(0, trackball_settings_rpc_test_dispatch(&context, TRACKBALL_SETTINGS_RPC_TEST_APPLY,
+                                                      &request, &response));
+    CHECK_EQ(TRACKBALL_SETTINGS_RPC_TEST_SENSOR_WRITE_FAILED, response.result);
+    CHECK_EQ(7, response.config.revision);
+    CHECK_EQ(0, context.notification_count);
+    return 0;
+}
+
+static int test_apply_maps_keymap_failure_stage_independent_of_errno(void) {
+    struct trackball_settings_record record = disabled_record(7);
+    struct trackball_settings_request request = apply_request(800, 200, true, 5, 7);
+    struct trackball_settings_rpc_test_context context;
+    struct trackball_settings_rpc_test_response response = {0};
+
+    fake_reset(&record, "kp");
+    fake.fail_save_keymap_call = 1;
+    fake.save_keymap_error = -EAGAIN;
+    context = test_context(&record);
+
+    CHECK_EQ(0, trackball_settings_rpc_test_dispatch(&context, TRACKBALL_SETTINGS_RPC_TEST_APPLY,
+                                                      &request, &response));
+    CHECK_EQ(TRACKBALL_SETTINGS_RPC_TEST_KEYMAP_WRITE_FAILED, response.result);
+    CHECK_EQ(7, response.config.revision);
+    CHECK_EQ(0, context.notification_count);
+    return 0;
+}
+
+static int test_apply_maps_settings_failure_stage_independent_of_errno(void) {
+    struct trackball_settings_record record = disabled_record(7);
+    struct trackball_settings_request request = apply_request(800, 200, true, 5, 7);
+    struct trackball_settings_rpc_test_context context;
+    struct trackball_settings_rpc_test_response response = {0};
+
+    fake_reset(&record, "kp");
+    fake.fail_save_settings_call = 1;
+    fake.save_settings_error = -EIO;
+    context = test_context(&record);
+
+    CHECK_EQ(0, trackball_settings_rpc_test_dispatch(&context, TRACKBALL_SETTINGS_RPC_TEST_APPLY,
+                                                      &request, &response));
+    CHECK_EQ(TRACKBALL_SETTINGS_RPC_TEST_SETTINGS_WRITE_FAILED, response.result);
+    CHECK_EQ(7, response.config.revision);
+    CHECK_EQ(0, context.notification_count);
+    return 0;
+}
+
+static int test_get_observes_precision_transition_outside_the_handler(void) {
+    struct trackball_settings_record record = disabled_record(7);
+    struct trackball_settings_rpc_test_context context;
+    struct trackball_settings_rpc_test_response response = {0};
+
+    fake_reset(&record, "kp");
+    context = test_context(&record);
+
+    CHECK_EQ(0, fake_report_data_set_precision_active(true));
+    CHECK_EQ(0, trackball_settings_rpc_test_dispatch(&context, TRACKBALL_SETTINGS_RPC_TEST_GET, NULL,
+                                                      &response));
+    CHECK(response.config.precision_active,
+          "get must use the runtime snapshot after report-data changes precision mode");
+    CHECK_EQ(200, response.config.current_cpi);
     return 0;
 }
 
@@ -496,6 +621,10 @@ int main(void) {
         test_get_reads_authoritative_config_without_writes,
         test_validate_checks_without_writing,
         test_apply_returns_persisted_readback_and_notifies,
+        test_apply_maps_sensor_failure_stage_independent_of_errno,
+        test_apply_maps_keymap_failure_stage_independent_of_errno,
+        test_apply_maps_settings_failure_stage_independent_of_errno,
+        test_get_observes_precision_transition_outside_the_handler,
         test_stale_revision_returns_readback_without_writes,
         test_invalid_cpi_returns_error_without_writes,
         test_unsupported_binding_returns_error_without_writes,
@@ -529,6 +658,22 @@ ZTEST(studio_trackball_settings, validate_checks_without_writing) {
 
 ZTEST(studio_trackball_settings, apply_returns_persisted_readback_and_notifies) {
     zassert_equal(0, test_apply_returns_persisted_readback_and_notifies());
+}
+
+ZTEST(studio_trackball_settings, apply_maps_sensor_failure_stage_independent_of_errno) {
+    zassert_equal(0, test_apply_maps_sensor_failure_stage_independent_of_errno());
+}
+
+ZTEST(studio_trackball_settings, apply_maps_keymap_failure_stage_independent_of_errno) {
+    zassert_equal(0, test_apply_maps_keymap_failure_stage_independent_of_errno());
+}
+
+ZTEST(studio_trackball_settings, apply_maps_settings_failure_stage_independent_of_errno) {
+    zassert_equal(0, test_apply_maps_settings_failure_stage_independent_of_errno());
+}
+
+ZTEST(studio_trackball_settings, get_observes_precision_transition_outside_the_handler) {
+    zassert_equal(0, test_get_observes_precision_transition_outside_the_handler());
 }
 
 ZTEST(studio_trackball_settings, stale_revision_returns_readback_without_writes) {

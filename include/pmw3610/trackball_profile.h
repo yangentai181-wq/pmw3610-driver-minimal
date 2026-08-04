@@ -16,12 +16,19 @@ struct trackball_profile {
     uint16_t precision_cpi;
 };
 
+struct pmw3610_precision_snapshot {
+    bool precision_active;
+    uint16_t current_cpi;
+};
+
 int trackball_profile_validate(uint16_t normal_cpi, uint16_t precision_cpi);
 uint16_t trackball_profile_cpi(const struct trackball_profile *profile, bool precision_active);
 
 /* Runtime sensor APIs must be called from Zephyr thread context, not an ISR. */
 int pmw3610_apply_profile(const struct trackball_profile *profile);
 int pmw3610_set_precision_active(bool active);
+/* Returns mode and effective CPI from one mutex-protected runtime state snapshot. */
+int pmw3610_get_precision_snapshot(struct pmw3610_precision_snapshot *snapshot);
 uint16_t pmw3610_current_cpi(void);
 
 #ifdef __cplusplus

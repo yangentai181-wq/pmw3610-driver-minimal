@@ -497,14 +497,34 @@ out:
 }
 
 uint16_t pmw3610_current_cpi(void) {
-    struct trackball_profile profile;
-    bool precision_active;
+    struct pmw3610_precision_snapshot snapshot;
 
-    if (pmw3610_profile_snapshot(&profile, &precision_active)) {
+    if (pmw3610_get_precision_snapshot(&snapshot)) {
         return 0;
     }
 
-    return trackball_profile_cpi(&profile, precision_active);
+    return snapshot.current_cpi;
+}
+
+int pmw3610_get_precision_snapshot(struct pmw3610_precision_snapshot *snapshot) {
+    int err;
+
+    if (snapshot == NULL) {
+        return -EINVAL;
+    }
+
+    err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
+    if (err) {
+        return err;
+    }
+
+    *snapshot = (struct pmw3610_precision_snapshot){
+        .precision_active = pmw3610_precision_active,
+        .current_cpi = trackball_profile_cpi(&pmw3610_profile, pmw3610_precision_active),
+    };
+
+    (void)k_mutex_unlock(&pmw3610_runtime_lock);
+    return 0;
 }
 
 /* Set sampling rate in each mode (in ms) */

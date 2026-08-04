@@ -630,6 +630,42 @@ static int test_rolls_back_after_settings_save_failure_and_returns_that_error(vo
     return 0;
 }
 
+static int test_apply_reports_the_write_stage_separately_from_errno(void) {
+    struct trackball_settings_record current = disabled_record(7);
+    struct trackball_settings_request next = request(800, 200, true, 5, 7);
+    enum trackball_settings_failure_stage failure_stage;
+
+    fake_reset(&current);
+    fake_put_binding(5, binding("kp", KEY_A, 0));
+    fake.fail_apply_profile_call = 1;
+    fake.apply_profile_error = -EIO;
+    failure_stage = TRACKBALL_SETTINGS_FAILURE_STAGE_NONE;
+    CHECK_INT(-EIO, trackball_settings_apply_with_failure_stage(
+                         &current, &next, &adapter, &failure_stage));
+    CHECK_INT(TRACKBALL_SETTINGS_FAILURE_STAGE_SENSOR, failure_stage);
+
+    current = disabled_record(7);
+    fake_reset(&current);
+    fake_put_binding(5, binding("kp", KEY_A, 0));
+    fake.fail_save_keymap_call = 1;
+    fake.save_keymap_error = -EAGAIN;
+    failure_stage = TRACKBALL_SETTINGS_FAILURE_STAGE_NONE;
+    CHECK_INT(-EAGAIN, trackball_settings_apply_with_failure_stage(
+                           &current, &next, &adapter, &failure_stage));
+    CHECK_INT(TRACKBALL_SETTINGS_FAILURE_STAGE_KEYMAP, failure_stage);
+
+    current = disabled_record(7);
+    fake_reset(&current);
+    fake_put_binding(5, binding("kp", KEY_A, 0));
+    fake.fail_save_settings_call = 1;
+    fake.save_settings_error = -EIO;
+    failure_stage = TRACKBALL_SETTINGS_FAILURE_STAGE_NONE;
+    CHECK_INT(-EIO, trackball_settings_apply_with_failure_stage(
+                         &current, &next, &adapter, &failure_stage));
+    CHECK_INT(TRACKBALL_SETTINGS_FAILURE_STAGE_SETTINGS, failure_stage);
+    return 0;
+}
+
 static int test_reload_validates_schema_and_reapplies_wrapper_and_profile(void) {
     struct trackball_settings_record current = disabled_record(0);
     const struct trackball_settings_record initial = current;
@@ -807,6 +843,7 @@ int main(void) {
            test_rolls_back_after_profile_failure_and_returns_that_error() ||
            test_rolls_back_after_keymap_save_failure_and_returns_that_error() ||
            test_rolls_back_after_settings_save_failure_and_returns_that_error() ||
+           test_apply_reports_the_write_stage_separately_from_errno() ||
            test_reload_validates_schema_and_reapplies_wrapper_and_profile() ||
            test_reload_restores_snapshot_after_set_failure() ||
            test_reload_restores_profile_after_apply_profile_failure() ||
@@ -878,6 +915,10 @@ ZTEST(trackball_settings, test_rolls_back_after_keymap_save_failure_and_returns_
 
 ZTEST(trackball_settings, test_rolls_back_after_settings_save_failure_and_returns_that_error) {
     zassert_equal(test_rolls_back_after_settings_save_failure_and_returns_that_error(), 0, "test failed");
+}
+
+ZTEST(trackball_settings, test_apply_reports_the_write_stage_separately_from_errno) {
+    zassert_equal(test_apply_reports_the_write_stage_separately_from_errno(), 0, "test failed");
 }
 
 ZTEST(trackball_settings, test_reload_validates_schema_and_reapplies_wrapper_and_profile) {
