@@ -23,6 +23,8 @@ struct pmw3610_precision_snapshot {
 
 int trackball_profile_validate(uint16_t normal_cpi, uint16_t precision_cpi);
 uint16_t trackball_profile_cpi(const struct trackball_profile *profile, bool precision_active);
+bool trackball_profile_precision_requested(bool legacy_snipe_active,
+                                           bool precision_layer_active);
 
 /* Runtime sensor APIs must be called from Zephyr thread context, not an ISR. */
 int pmw3610_apply_profile(const struct trackball_profile *profile);

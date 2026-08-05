@@ -17,6 +17,10 @@
 #include <zmk/keymap.h>
 #include "pmw3610.h"
 
+#ifdef CONFIG_PMW3610_TRACKBALL_SETTINGS
+#include <pmw3610/trackball_settings.h>
+#endif
+
 #ifdef CONFIG_PMW3610_FILTER_1EURO
 #include <math.h>
 #endif
@@ -844,12 +848,18 @@ static int pmw3610_report_data(const struct device *dev) {
     int32_t dividor;
     enum pixart_input_mode input_mode = get_input_mode_for_current_layer(dev);
     bool input_mode_changed = data->curr_mode != input_mode;
+    bool precision_layer_active = false;
+#ifdef CONFIG_PMW3610_TRACKBALL_SETTINGS
+    precision_layer_active =
+        zmk_keymap_layer_active(TRACKBALL_SETTINGS_PRECISION_LAYER);
+#endif
     int err = k_mutex_lock(&pmw3610_runtime_lock, K_FOREVER);
     if (err) {
         return err;
     }
 
-    err = pmw3610_set_precision_active(input_mode == SNIPE);
+    err = pmw3610_set_precision_active(trackball_profile_precision_requested(
+        input_mode == SNIPE, precision_layer_active));
     if (err) {
         goto mode_out;
     }

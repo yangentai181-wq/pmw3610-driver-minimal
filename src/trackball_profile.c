@@ -21,3 +21,8 @@ uint16_t trackball_profile_cpi(const struct trackball_profile *profile, bool pre
 
     return precision_active ? profile->precision_cpi : profile->normal_cpi;
 }
+
+bool trackball_profile_precision_requested(bool legacy_snipe_active,
+                                           bool precision_layer_active) {
+    return legacy_snipe_active || precision_layer_active;
+}

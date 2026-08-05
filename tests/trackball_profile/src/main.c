@@ -53,9 +53,18 @@ static int test_mode_selects_confirmed_cpi(void) {
     return 0;
 }
 
+static int test_precision_layer_survives_normal_pointer_reports(void) {
+    ASSERT_EQUAL(true, trackball_profile_precision_requested(false, true));
+    ASSERT_EQUAL(true, trackball_profile_precision_requested(true, false));
+    ASSERT_EQUAL(false, trackball_profile_precision_requested(false, false));
+
+    return 0;
+}
+
 int main(void) {
     return test_accepts_200_step_values() || test_rejects_invalid_values() ||
-           test_mode_selects_confirmed_cpi();
+           test_mode_selects_confirmed_cpi() ||
+           test_precision_layer_survives_normal_pointer_reports();
 }
 
 #else
@@ -76,6 +85,12 @@ ZTEST(trackball_profile, test_mode_selects_confirmed_cpi) {
 
     zassert_equal(800, trackball_profile_cpi(&profile, false));
     zassert_equal(200, trackball_profile_cpi(&profile, true));
+}
+
+ZTEST(trackball_profile, test_precision_layer_survives_normal_pointer_reports) {
+    zassert_true(trackball_profile_precision_requested(false, true));
+    zassert_true(trackball_profile_precision_requested(true, false));
+    zassert_false(trackball_profile_precision_requested(false, false));
 }
 
 ZTEST_SUITE(trackball_profile, NULL, NULL, NULL, NULL, NULL);
