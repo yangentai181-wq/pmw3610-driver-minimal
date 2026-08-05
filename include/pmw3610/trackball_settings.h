@@ -83,6 +83,9 @@ int trackball_settings_apply_with_failure_stage(
 int trackball_settings_reload(struct trackball_settings_record *current,
                               const struct trackball_settings_record *record,
                               const struct trackball_settings_adapter *adapter);
+int trackball_settings_recover_orphan_wrapper(
+    struct trackball_settings_record *current, uint8_t position_count,
+    const struct trackball_settings_adapter *adapter);
 int trackball_settings_read_record_exact(struct trackball_settings_record *record,
                                          trackball_settings_record_read_cb read_cb, void *cb_arg);
 

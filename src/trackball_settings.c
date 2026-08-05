@@ -14,6 +14,7 @@
 
 #include <zmk/behavior.h>
 #include <zmk/keymap.h>
+#include <zmk/matrix.h>
 #endif
 
 enum trackball_settings_binding_kind {
@@ -655,6 +656,73 @@ rollback:
     return err;
 }
 
+int trackball_settings_recover_orphan_wrapper(
+    struct trackball_settings_record *current, uint8_t position_count,
+    const struct trackball_settings_adapter *adapter) {
+    struct trackball_settings_record recovered;
+    uint8_t orphan_position = 0;
+    uint32_t orphan_tap = 0;
+    bool found = false;
+    const char *kp_name;
+    uint16_t kp_id;
+    int err;
+
+    if (current == NULL || !trackball_settings_adapter_valid(adapter)) {
+        return -EINVAL;
+    }
+    err = trackball_settings_record_validate(current);
+    if (err != 0) {
+        return err;
+    }
+    if (current->enabled || position_count == 0U) {
+        return 0;
+    }
+
+    for (uint8_t position = 0; position < position_count; position++) {
+        const struct zmk_behavior_binding *binding =
+            adapter->get_binding(TRACKBALL_SETTINGS_BASE_LAYER, position);
+        enum trackball_settings_binding_kind kind = trackball_settings_binding_kind_from_name(
+            trackball_settings_binding_name(binding));
+
+        if (binding == NULL || kind != TRACKBALL_SETTINGS_BINDING_LT ||
+            binding->param1 != TRACKBALL_SETTINGS_PRECISION_LAYER) {
+            continue;
+        }
+        if (found) {
+            return 0;
+        }
+        found = true;
+        orphan_position = position;
+        orphan_tap = binding->param2;
+    }
+    if (!found) {
+        return 0;
+    }
+    if (current->revision == UINT32_MAX) {
+        return -EOVERFLOW;
+    }
+
+    kp_name = trackball_settings_behavior_name(TRACKBALL_SETTINGS_BINDING_KP);
+    kp_id = trackball_settings_behavior_id(kp_name);
+    if (kp_name == NULL || kp_id == UINT16_MAX) {
+        return -ENOTSUP;
+    }
+    recovered = *current;
+    recovered.enabled = true;
+    recovered.selected_position = orphan_position;
+    recovered.original_behavior_id = kp_id;
+    recovered.original_param1 = orphan_tap;
+    recovered.original_param2 = 0;
+    recovered.revision++;
+
+    err = adapter->save_settings(&recovered);
+    if (err != 0) {
+        return err;
+    }
+    *current = recovered;
+    return 0;
+}
+
 #if !defined(TRACKBALL_SETTINGS_HOST_TEST) && !defined(TRACKBALL_SETTINGS_TEST_ADAPTER)
 
 #define TRACKBALL_SETTINGS_STORAGE_KEY "trackball/settings"
@@ -762,9 +830,13 @@ int trackball_settings_get_record(struct trackball_settings_record *record) {
     if (err != 0) {
         return err;
     }
-    *record = trackball_settings_current;
+    err = trackball_settings_recover_orphan_wrapper(
+        &trackball_settings_current, ZMK_KEYMAP_LEN, &trackball_settings_zephyr_adapter);
+    if (err == 0) {
+        *record = trackball_settings_current;
+    }
     (void)k_mutex_unlock(&trackball_settings_lock);
-    return 0;
+    return err;
 }
 
 int trackball_settings_validate_request(const struct trackball_settings_request *request) {

@@ -17,7 +17,7 @@ _Static_assert(offsetof(struct trackball_settings_adapter, apply_profile) +
                sizeof(struct trackball_settings_adapter),
                "trackball_settings_adapter must retain exactly five callbacks");
 
-#define TEST_POSITION_COUNT 12U
+#define TEST_POSITION_COUNT 24U
 #define KEY_A 0x00070004U
 #define KEY_B 0x00070005U
 #define KEY_C 0x00070006U
@@ -700,6 +700,65 @@ static int test_reload_validates_schema_and_reapplies_wrapper_and_profile(void) 
     return 0;
 }
 
+static int test_recovers_one_orphan_precision_wrapper_as_its_tap_key(void) {
+    struct trackball_settings_record current = disabled_record(7);
+    struct zmk_behavior_binding orphan =
+        binding("lt", TRACKBALL_SETTINGS_PRECISION_LAYER, KEY_B);
+
+    fake_reset(&current);
+    fake_put_binding(23, orphan);
+
+    CHECK_INT(0, trackball_settings_recover_orphan_wrapper(
+                     &current, TEST_POSITION_COUNT, &adapter));
+    CHECK(current.enabled, "the orphan wrapper must restore enabled state");
+    CHECK_INT(23, current.selected_position);
+    CHECK_INT(TRACKBALL_SETTINGS_TEST_BEHAVIOR_ID_KP, current.original_behavior_id);
+    CHECK_INT(KEY_B, current.original_param1);
+    CHECK_INT(0, current.original_param2);
+    CHECK_INT(8, current.revision);
+    CHECK(binding_equal(fake_get_binding(0, 23), &orphan),
+          "recovery must adopt the existing wrapper without rewriting it");
+    CHECK_INT(0, fake.set_calls);
+    CHECK_INT(0, fake.save_keymap_calls);
+    CHECK_INT(1, fake.save_settings_calls);
+    CHECK(record_equal(&current, &fake.persisted),
+          "the recovered record must be persisted exactly");
+    return 0;
+}
+
+static int test_orphan_recovery_is_conservative_and_atomic(void) {
+    struct trackball_settings_record current = disabled_record(7);
+    const struct trackball_settings_record before = current;
+
+    fake_reset(&current);
+    CHECK_INT(0, trackball_settings_recover_orphan_wrapper(
+                     &current, TEST_POSITION_COUNT, &adapter));
+    CHECK(record_equal(&before, &current),
+          "zero orphan wrappers must leave the record unchanged");
+    CHECK_INT(0, fake.save_settings_calls);
+
+    current = before;
+    fake_reset(&current);
+    fake_put_binding(3, binding("lt", TRACKBALL_SETTINGS_PRECISION_LAYER, KEY_A));
+    fake_put_binding(5, binding("lt", TRACKBALL_SETTINGS_PRECISION_LAYER, KEY_B));
+    CHECK_INT(0, trackball_settings_recover_orphan_wrapper(
+                     &current, TEST_POSITION_COUNT, &adapter));
+    CHECK(record_equal(&before, &current),
+          "multiple orphan wrappers must not be guessed");
+    CHECK_INT(0, fake.save_settings_calls);
+
+    current = before;
+    fake_reset(&current);
+    fake_put_binding(5, binding("lt", TRACKBALL_SETTINGS_PRECISION_LAYER, KEY_B));
+    fake.fail_save_settings_call = 1;
+    fake.save_settings_error = -ENOSPC;
+    CHECK_INT(-ENOSPC, trackball_settings_recover_orphan_wrapper(
+                           &current, TEST_POSITION_COUNT, &adapter));
+    CHECK(record_equal(&before, &current),
+          "a failed recovery save must leave the runtime record untouched");
+    return 0;
+}
+
 static void prepare_reload_failure(struct trackball_settings_record *current,
                                    struct trackball_settings_record *record,
                                    struct zmk_behavior_binding *original) {
@@ -845,6 +904,8 @@ int main(void) {
            test_rolls_back_after_settings_save_failure_and_returns_that_error() ||
            test_apply_reports_the_write_stage_separately_from_errno() ||
            test_reload_validates_schema_and_reapplies_wrapper_and_profile() ||
+           test_recovers_one_orphan_precision_wrapper_as_its_tap_key() ||
+           test_orphan_recovery_is_conservative_and_atomic() ||
            test_reload_restores_snapshot_after_set_failure() ||
            test_reload_restores_profile_after_apply_profile_failure() ||
            test_reload_restores_profile_after_binding_readback_failure() ||
@@ -923,6 +984,14 @@ ZTEST(trackball_settings, test_apply_reports_the_write_stage_separately_from_err
 
 ZTEST(trackball_settings, test_reload_validates_schema_and_reapplies_wrapper_and_profile) {
     zassert_equal(test_reload_validates_schema_and_reapplies_wrapper_and_profile(), 0, "test failed");
+}
+
+ZTEST(trackball_settings, test_recovers_one_orphan_precision_wrapper_as_its_tap_key) {
+    zassert_equal(test_recovers_one_orphan_precision_wrapper_as_its_tap_key(), 0, "test failed");
+}
+
+ZTEST(trackball_settings, test_orphan_recovery_is_conservative_and_atomic) {
+    zassert_equal(test_orphan_recovery_is_conservative_and_atomic(), 0, "test failed");
 }
 
 ZTEST(trackball_settings, test_reload_restores_snapshot_after_set_failure) {
